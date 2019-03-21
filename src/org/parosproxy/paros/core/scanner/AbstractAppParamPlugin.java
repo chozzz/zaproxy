@@ -33,6 +33,7 @@
 // ZAP: 2014/08/14 Issue 1279: Active scanner excluded parameters not working when "Where" is "Any"
 // ZAP: 2016/06/15 Add VariantHeader based on the current scan options
 // ZAP: 2017/10/31 Use ExtensionLoader.getExtension(Class).
+// ZAP: 2018/09/12 Make the addition of a query parameter optional.
 package org.parosproxy.paros.core.scanner;
 
 import java.util.ArrayList;
@@ -40,6 +41,7 @@ import java.util.Collections;
 import java.util.List;
 
 import org.apache.log4j.Logger;
+import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.control.Control;
 import org.parosproxy.paros.network.HttpMessage;
 import org.zaproxy.zap.extension.ascan.ExtensionActiveScan;
@@ -62,7 +64,9 @@ public abstract class AbstractAppParamPlugin extends AbstractAppPlugin {
 
         // First check URL query-string target configuration
         if ((targets & ScannerParam.TARGET_QUERYSTRING) != 0) {
-            listVariant.add(new VariantURLQuery());
+            VariantURLQuery vuq = new VariantURLQuery();
+            vuq.setAddQueryParam(scanOptions.isAddQueryParam());
+            listVariant.add(vuq);
 
             // ZAP: To handle parameters in OData urls
             if ((enabledRPC & ScannerParam.RPC_ODATA) != 0) {
@@ -82,7 +86,7 @@ public abstract class AbstractAppParamPlugin extends AbstractAppPlugin {
 
             // ZAP: To handle Multipart Form-Data POST requests
             if ((enabledRPC & ScannerParam.RPC_MULTIPART) != 0) {
-                listVariant.add(new VariantMultipartFormQuery());
+                listVariant.add(new VariantMultipartFormParameters());
             }
 
             // ZAP: To handle XML based POST requests
@@ -151,6 +155,11 @@ public abstract class AbstractAppParamPlugin extends AbstractAppPlugin {
             listVariant.add(new VariantUserDefined());
         }
 
+        if (listVariant.isEmpty()) {
+            getParent().pluginSkipped(this, Constant.messages.getString("ascan.progress.label.skipped.reason.noinputvectors"));
+            return;
+        }
+
         
         for (int i = 0; i < listVariant.size() && !isStop(); i++) {
             
@@ -198,7 +207,7 @@ public abstract class AbstractAppParamPlugin extends AbstractAppPlugin {
     }
     
     /**
-     * Inner methid to check if the current parameter should be excluded
+     * Inner method to check if the current parameter should be excluded
      * @param param the param object
      * @return true if it need to be excluded
      */

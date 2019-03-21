@@ -469,19 +469,13 @@ public class SpiderAPI extends ApiImplementor {
 				throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, PARAM_URL);
 			}
 
-			try {
-				node = SessionStructure.find(Model.getSingleton().getSession().getSessionId(), new URI(url, false), "GET", "");
-			} catch (Exception e) {
-				throw new ApiException(ApiException.Type.INTERNAL_ERROR);
-			}
+			node = getStartNode(startURI, recurse);
 		}
-		Target target;
-		if (useUrl) {
-			target = new Target(node);
-			target.setContext(context);
-		} else {
-			target = new Target(context);
+		Target target = new Target();
+		if (useUrl && node != null) {
+			target.setStartNode(node);
 		}
+		target.setContext(context);
 		target.setRecurse(recurse);
 		
 		switch (Control.getSingleton().getMode()) {
@@ -524,6 +518,32 @@ public class SpiderAPI extends ApiImplementor {
 		}
 		
 		return extension.startScan(target, user, objs.toArray(new Object[objs.size()]));
+	}
+
+	/**
+	 * Gets a node for the given URI and recurse value, for use as start/seed of the spider.
+	 * <p>
+	 * If {@code recurse} is {@code true} it returns a node that represents a directory (if present in the session) otherwise
+	 * the node represents a GET node of the URI. If neither of the nodes is found in the session it returns {@code null}.
+	 *
+	 * @param startURI the starting URI, must not be {@code null}.
+	 * @param recurse {@code true} if the spider should use existing URLs as seeds, {@code false} otherwise.
+	 * @return the start node, might be {@code null}.
+	 * @throws ApiException if an error occurred while obtaining the start node.
+	 */
+	private StructuralNode getStartNode(URI startURI, boolean recurse) throws ApiException {
+		StructuralNode startNode = null;
+		try {
+			if (recurse) {
+				startNode = SessionStructure.find(Model.getSingleton().getSession().getSessionId(), startURI, "", "");
+			}
+			if (startNode == null) {
+				startNode = SessionStructure.find(Model.getSingleton().getSession().getSessionId(), startURI, "GET", "");
+			}
+		} catch (Exception e) {
+			throw new ApiException(ApiException.Type.INTERNAL_ERROR, e);
+		}
+		return startNode;
 	}
 
 	@Override
@@ -612,7 +632,7 @@ public class SpiderAPI extends ApiImplementor {
 			String url;
 			for (Integer id : ids) {
 				try {
-					RecordHistory rh = tableHistory.read(id.intValue());
+					RecordHistory rh = tableHistory.read(id);
 					if (rh != null) {
 						url = rh.getHttpMessage().getRequestHeader().getURI().toString();
 						if (urlSet.add(url)) {

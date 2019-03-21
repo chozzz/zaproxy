@@ -45,6 +45,12 @@
 // ZAP: 2017/04/24 Added more HTTP methods
 // ZAP: 2017/10/19 Skip parsing of empty Cookie headers.
 // ZAP: 2017/11/22 Address a NPE in isImage().
+// ZAP: 2018/01/10 Tweak how cookie header is reconstructed from HtmlParameter(s).
+// ZAP: 2018/02/06 Make the upper case changes locale independent (Issue 4327).
+// ZAP: 2018/08/10 Allow to set the user agent used by default request headers (Issue 4846).
+// ZAP: 2018/11/16 Add Accept header.
+// ZAP: 2019/01/25 Add Origin header.
+// ZAP: 2019/03/06 Log or include the malformed data in the exception message.
 
 package org.parosproxy.paros.network;
 
@@ -55,6 +61,7 @@ import java.net.URLEncoder;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.TreeSet;
 import java.util.Vector;
 import java.util.regex.Matcher;
@@ -65,6 +72,20 @@ import org.apache.commons.httpclient.URIException;
 import org.apache.log4j.Logger;
 
 public class HttpRequestHeader extends HttpHeader {
+
+    /**
+     * The {@code Accept} request header.
+     *
+     * @since TODO add version
+     */
+    public static final String ACCEPT = "Accept";
+
+    /**
+     * The {@code Origin} request header.
+     *
+     * @since TODO add version
+     */
+    public static final String ORIGIN = "Origin";
 
     private static final long serialVersionUID = 4156598327921777493L;
     private static final Logger log = Logger.getLogger(HttpRequestHeader.class);
@@ -91,6 +112,12 @@ public class HttpRequestHeader extends HttpHeader {
     //	= Pattern.compile("([^:]+)\\s*?:?\\s*?(\\d*?)");
     private static final Pattern patternImage = Pattern.compile("\\.(bmp|ico|jpg|jpeg|gif|tiff|tif|png)\\z", Pattern.CASE_INSENSITIVE);
     private static final Pattern patternPartialRequestLine = Pattern.compile("\\A *(OPTIONS|GET|HEAD|POST|PUT|DELETE|TRACE|CONNECT)\\b", Pattern.CASE_INSENSITIVE);
+
+    /**
+     * The user agent used by {@link #HttpRequestHeader(String, URI, String) default request header}.
+     */
+    private static String defaultUserAgent;
+
     private String mMethod;
     private URI mUri;
     private String mHostName;
@@ -159,13 +186,25 @@ public class HttpRequestHeader extends HttpHeader {
 
     }
 
+    /**
+     * Constructs a {@code HttpRequestHeader} with the given method, URI, and version.
+     * <p>
+     * The following headers are automatically added:
+     * <ul>
+     * <li>{@code Host}, with the domain and port from the given URI.</li>
+     * <li>{@code User-Agent}, using the {@link #getDefaultUserAgent()}.</li>
+     * <li>{@code Pragma: no-cache}</li>
+     * <li>{@code Cache-Control: no-cache}, if version is HTTP/1.1</li>
+     * <li>{@code Content-Type: application/x-www-form-urlencoded}, if the method is POST or PUT.</li>
+     * </ul>
+     *
+     * @param method the request method.
+     * @param uri the request target.
+     * @param version the version, for example, {@code HTTP/1.1}.
+     * @throws HttpMalformedHeaderException if the resulting HTTP header is malformed.
+     */
     public HttpRequestHeader(String method, URI uri, String version) throws HttpMalformedHeaderException {
-        this(method, uri, version, null);
-    }
-
-    public HttpRequestHeader(String method, URI uri, String version,
-    		ConnectionParam params) throws HttpMalformedHeaderException {
-        this(method + " " + uri.toString() + " " + version.toUpperCase() + CRLF + CRLF);
+        this(method + " " + uri.toString() + " " + version.toUpperCase(Locale.ROOT) + CRLF + CRLF);
         
         try {
             setHeader(HOST, uri.getHost() + (uri.getPort() > 0 ? ":" + Integer.toString(uri.getPort()) : ""));
@@ -174,10 +213,7 @@ public class HttpRequestHeader extends HttpHeader {
             log.error(e.getMessage(), e);
         }
         
-        String userAgent = params != null
-                ? params.getDefaultUserAgent()
-                : "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.0;)";
-        setHeader(USER_AGENT, userAgent);
+        setHeader(USER_AGENT, defaultUserAgent);
         setHeader(PRAGMA, "no-cache");
         
         // ZAP: added the Cache-Control header field to comply with HTTP/1.1
@@ -197,6 +233,32 @@ public class HttpRequestHeader extends HttpHeader {
             setContentLength(0);
         }
 
+    }
+
+    /**
+     * Constructs a {@code HttpRequestHeader} with the given method, URI, and version.
+     * <p>
+     * The following headers are automatically added:
+     * <ul>
+     * <li>{@code Host}, with the domain and port from the given URI.</li>
+     * <li>{@code User-Agent}, using the {@link #getDefaultUserAgent()}.</li>
+     * <li>{@code Pragma: no-cache}</li>
+     * <li>{@code Cache-Control: no-cache}, if version is HTTP/1.1</li>
+     * <li>{@code Content-Type: application/x-www-form-urlencoded}, if the method is POST or PUT.</li>
+     * </ul>
+     *
+     * @param method the request method.
+     * @param uri the request target.
+     * @param version the version, for example, {@code HTTP/1.1}.
+     * @param params unused.
+     * @throws HttpMalformedHeaderException if the resulting HTTP header is malformed.
+     * @deprecated (TODO add version) Use {@link #HttpRequestHeader(String, URI, String)} instead.
+     * @since 2.4.2
+     */
+    @Deprecated
+    public HttpRequestHeader(String method, URI uri, String version,
+           ConnectionParam params) throws HttpMalformedHeaderException {
+        this(method, uri, version);
     }
 
     /**
@@ -222,7 +284,7 @@ public class HttpRequestHeader extends HttpHeader {
             throw e;
         
         } catch (Exception e) {
-            log.error(e.getMessage(), e);
+            log.error("Failed to parse:\n" + data, e);
             mMalformedHeader = true;
             throw new HttpMalformedHeaderException(e.getMessage());
         }
@@ -252,7 +314,7 @@ public class HttpRequestHeader extends HttpHeader {
      * @param method the new method, must not be {@code null}.
      */
     public void setMethod(String method) {
-        mMethod = method.toUpperCase();
+        mMethod = method.toUpperCase(Locale.ROOT);
     }
 
     /**
@@ -346,7 +408,7 @@ public class HttpRequestHeader extends HttpHeader {
      */
     @Override
     public void setVersion(String version) {
-        mVersion = version.toUpperCase();
+        mVersion = version.toUpperCase(Locale.ROOT);
     }
 
     /**
@@ -375,7 +437,7 @@ public class HttpRequestHeader extends HttpHeader {
         Matcher matcher = patternRequestLine.matcher(mStartLine);
         if (!matcher.find()) {
             mMalformedHeader = true;
-            throw new HttpMalformedHeaderException("Failed to find pattern: " + patternRequestLine);
+            throw new HttpMalformedHeaderException("Failed to find pattern " + patternRequestLine + " in: " + mStartLine);
         }
 
         mMethod = matcher.group(1);
@@ -701,13 +763,16 @@ public class HttpRequestHeader extends HttpHeader {
                 continue;
             }
 
-            sbData.append(parameter.getName());
-            sbData.append('=');
+            String cookieName = parameter.getName();
+            if (!cookieName.isEmpty()) {
+                sbData.append(cookieName);
+                sbData.append('=');
+            }
             sbData.append(parameter.getValue());
             sbData.append("; ");
         }
 
-        if (sbData.length() <= 3) {
+        if (sbData.length() <= 2) {
             setHeader(HttpHeader.COOKIE, null);
             return;
         }
@@ -791,4 +856,25 @@ public class HttpRequestHeader extends HttpHeader {
         return senderAddress;
     }
     
+    /**
+     * Sets the user agent used by {@link #HttpRequestHeader(String, URI, String) default request header}.
+     * <p>
+     * This is expected to be called only by core code, when the corresponding option is changed.
+     *
+     * @param defaultUserAgent the default user agent.
+     * @since TODO add version
+     */
+    public static void setDefaultUserAgent(String defaultUserAgent) {
+        HttpRequestHeader.defaultUserAgent = defaultUserAgent;
+    }
+
+    /**
+     * Gets the user agent used by {@link #HttpRequestHeader(String, URI, String) default request header}.
+     *
+     * @return the default user agent.
+     * @since TODO add version
+     */
+    public static String getDefaultUserAgent() {
+        return defaultUserAgent;
+    }
 }

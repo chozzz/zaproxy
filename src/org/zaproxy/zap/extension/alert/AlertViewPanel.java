@@ -42,9 +42,12 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
 import javax.swing.JTextField;
+import javax.swing.ScrollPaneConstants;
 import javax.swing.border.TitledBorder;
 
 import org.apache.log4j.Logger;
+import org.jdesktop.swingx.JXPanel;
+import org.jdesktop.swingx.ScrollableSizeHint;
 import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.control.Control;
 import org.parosproxy.paros.core.scanner.Alert;
@@ -76,7 +79,7 @@ public class AlertViewPanel extends AbstractPanel {
 	private JScrollPane defaultPane = null;
 	private JScrollPane alertPane = null;
 	private ZapTextArea defaultOutput = null;
-	private JPanel alertDisplay = null;
+	private JXPanel alertDisplay = null;
 	private CardLayout cardLayout = null;
 	
 	private ZapLabel alertUrl = null;
@@ -155,6 +158,7 @@ public class AlertViewPanel extends AbstractPanel {
 	private JScrollPane getAlertPane() {
 		if (alertPane == null) {
 			alertPane = new JScrollPane();
+			alertPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
 			alertPane.setViewportView(getAlertDisplay());
 			alertPane.setName("alertPane");
 		}
@@ -186,8 +190,9 @@ public class AlertViewPanel extends AbstractPanel {
 	
 	private JPanel getAlertDisplay() {
 		if (alertDisplay == null) {
-			alertDisplay = new JPanel();
+			alertDisplay = new JXPanel();
 			alertDisplay.setLayout(new GridBagLayout());
+			alertDisplay.setScrollableHeightHint(ScrollableSizeHint.NONE);
 			alertDisplay.setName("alertDisplay");
 			
 			// Create the labels

@@ -19,7 +19,9 @@
  */
 package org.zaproxy.zap.extension.autoupdate;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import javax.swing.Icon;
 
@@ -81,7 +83,7 @@ public class UninstalledAddOnsTableModel extends AddOnsTableModel {
         case COLUMN_ADD_ON_WRAPPER:
             return getAddOnWrapper(rowIndex);
         case 0:
-            return Boolean.valueOf(getAddOnWrapper(rowIndex).hasRunningIssues());
+            return getAddOnWrapper(rowIndex).hasRunningIssues();
         case 1:
         	return View.getSingleton().getStatusUI(getAddOnWrapper(rowIndex).getAddOn().getStatus());
         case 2:
@@ -111,7 +113,7 @@ public class UninstalledAddOnsTableModel extends AddOnsTableModel {
         if (columnIndex == 5
                 && getAddOnWrapper(rowIndex).getInstallationStatus() != AddOn.InstallationStatus.DOWNLOADING) {
             if (aValue instanceof Boolean) {
-                getAddOnWrapper(rowIndex).setEnabled(((Boolean) aValue).booleanValue());
+                getAddOnWrapper(rowIndex).setEnabled((Boolean) aValue);
                 this.fireTableCellUpdated(rowIndex, columnIndex);
             }
         }
@@ -136,6 +138,25 @@ public class UninstalledAddOnsTableModel extends AddOnsTableModel {
     	}
     	return enable;
 	}
+	
+    public Set<AddOn> getAvailableAddOns() {
+        Set<AddOn> addOns = new HashSet<>();
+        for (AddOnWrapper aow : getAddOnWrappers()) {
+            if (aow.getInstallationStatus() == AddOn.InstallationStatus.AVAILABLE) {
+                addOns.add(aow.getAddOn());
+            }
+        }
+        return addOns;
+    }
+
+    public boolean hasAvailableAddOns() {
+        for (AddOnWrapper aow : getAddOnWrappers()) {
+            if (aow.getInstallationStatus() == AddOn.InstallationStatus.AVAILABLE) {
+                return true;
+            }
+        }
+        return false;
+    }
     
     public void addAddOn(AddOn addOn) {
         addAddOnWrapper(addOn, null);

@@ -246,9 +246,6 @@ public class ActiveScanAPI extends ApiImplementor {
 					throw new ApiException(Type.NO_IMPLEMENTOR, ExtensionUserManagement.NAME);
 				}
 				context = ApiUtils.getContextByParamId(params, PARAM_CONTEXT_ID);
-				if (!context.isIncluded(params.getString(PARAM_URL))) {
-					throw new ApiException(Type.URL_NOT_IN_CONTEXT, PARAM_CONTEXT_ID);
-				}
 				user = usersExtension.getContextUserAuthManager(context.getIndex()).getUserById(userID);
 				if (user == null) {
 					throw new ApiException(Type.USER_NOT_FOUND, PARAM_USER_ID);
@@ -312,7 +309,7 @@ public class ActiveScanAPI extends ApiImplementor {
 				getActiveScan(params).stopScan();
 				break;
 			case ACTION_REMOVE_SCAN:
-				GenericScanner2 activeScan = controller.removeScan(Integer.valueOf(params.getInt(PARAM_SCAN_ID)));
+				GenericScanner2 activeScan = controller.removeScan(params.getInt(PARAM_SCAN_ID));
 				if (activeScan == null) {
 					throw new ApiException(ApiException.Type.DOES_NOT_EXIST, PARAM_SCAN_ID);
 				}
@@ -647,7 +644,7 @@ public class ActiveScanAPI extends ApiImplementor {
 		if (id == -1) {
 			activeScan = controller.getLastScan();
 		} else {
-			activeScan = controller.getScan(Integer.valueOf(id));
+			activeScan = controller.getScan(id);
 		}
 
 		if (activeScan == null) {
@@ -661,7 +658,7 @@ public class ActiveScanAPI extends ApiImplementor {
 		if (ids.length > 0) {
 			for (String id : ids) {
 				try {
-					Plugin scanner = policy.getPluginFactory().getPlugin(Integer.valueOf(id.trim()).intValue());
+					Plugin scanner = policy.getPluginFactory().getPlugin(Integer.valueOf(id.trim()));
 					if (scanner != null) {
 						scanner.setEnabled(enabled);
 					}
@@ -677,7 +674,7 @@ public class ActiveScanAPI extends ApiImplementor {
 		if (ids.length > 0) {
 			for (String id : ids) {
 				try {
-					int policyId = Integer.valueOf(id.trim()).intValue();
+					int policyId = Integer.valueOf(id.trim());
 					if (hasPolicyWithId(policyId)) {
 						for (Plugin scanner : policy.getPluginFactory().getAllPlugin()) {
 							if (scanner.getCategory() == policyId) {
@@ -827,7 +824,11 @@ public class ActiveScanAPI extends ApiImplementor {
 			activeScan = getActiveScan(params);
 			int progress = 0;
 			if (activeScan != null) {
-				progress = activeScan.getProgress();
+				if (activeScan.isStopped()) {
+					progress = 100;
+				} else {
+					progress = activeScan.getProgress();
+				}
 			}
 			result = new ApiResponseElement(name, String.valueOf(progress));
 			break;
@@ -840,6 +841,7 @@ public class ActiveScanAPI extends ApiImplementor {
 				map.put("state", scan.getState().name());
 				map.put("reqCount", Integer.toString(scan.getTotalRequests()));
 				map.put("alertCount", Integer.toString(scan.getAlertsIds().size()));
+				map.put("newAlertCount", Integer.toString(scan.getTotalNewAlerts()));
 				resultList.addItem(new ApiResponseSet<String>("scan", map));
 			}
 			result = resultList;

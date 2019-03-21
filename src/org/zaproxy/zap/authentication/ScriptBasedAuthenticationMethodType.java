@@ -29,6 +29,7 @@ import net.sf.json.JSONObject;
 
 import org.apache.commons.configuration.Configuration;
 import org.apache.commons.configuration.ConfigurationException;
+import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.control.Control;
@@ -45,7 +46,6 @@ import org.zaproxy.zap.authentication.GenericAuthenticationCredentials.GenericAu
 import org.zaproxy.zap.extension.api.ApiDynamicActionImplementor;
 import org.zaproxy.zap.extension.api.ApiException;
 import org.zaproxy.zap.extension.api.ApiResponse;
-import org.zaproxy.zap.extension.api.ApiResponseSet;
 import org.zaproxy.zap.extension.authentication.AuthenticationAPI;
 import org.zaproxy.zap.extension.script.ExtensionScript;
 import org.zaproxy.zap.extension.script.ScriptType;
@@ -266,7 +266,7 @@ public class ScriptBasedAuthenticationMethodType extends AuthenticationMethodTyp
 			values.put("methodName", API_METHOD_NAME);
 			values.put("scriptName", script.getName());
 			values.putAll(paramValues);
-			return new ApiResponseSet<String>("method", values);
+			return new AuthMethodApiResponseRepresentation<>(values);
 		}
 
 	}
@@ -453,7 +453,8 @@ public class ScriptBasedAuthenticationMethodType extends AuthenticationMethodTyp
 				getScriptsExtension().handleScriptException(scriptW, e);
 				log.error("Error while calling authentication script", e);
 				warnAndResetPanel(Constant.messages.getString(
-						"authentication.method.script.dialog.error.text.loading", e.getMessage()));
+						"authentication.method.script.dialog.error.text.loading",
+						ExceptionUtils.getRootCauseMessage(e)));
 			}
 		}
 
@@ -646,6 +647,11 @@ public class ScriptBasedAuthenticationMethodType extends AuthenticationMethodTyp
 		return new GenericAuthenticationCredentials(new String[0]);
 	}
 
+	@Override
+	public Class<GenericAuthenticationCredentials> getAuthenticationCredentialsType() {
+		return GenericAuthenticationCredentials.class;
+	}
+
 	private ExtensionScript getScriptsExtension() {
 		if (extensionScript == null)
 			extensionScript = Control.getSingleton().getExtensionLoader().getExtension(ExtensionScript.class);
@@ -665,9 +671,21 @@ public class ScriptBasedAuthenticationMethodType extends AuthenticationMethodTyp
 
 	private AuthenticationScriptV2 getScriptInterfaceV2(ScriptWrapper script) {
 		try {
-			return getScriptsExtension().getInterface(script, AuthenticationScriptV2.class);
+			AuthenticationScriptV2 authScript = getScriptsExtension().getInterface(script, AuthenticationScriptV2.class);
+
+			// Some ScriptEngines do not verify if all Interface Methods are contained in the script.
+			// So we must invoke them to ensure that they are defined in the loaded script!
+			// Otherwise some ScriptEngines loads successfully AuthenticationScriptV2 without the methods
+			// getLoggedInIndicator() / getLoggedOutIndicator().
+			// Though it should fallback to interface AuthenticationScript.
+			authScript.getLoggedInIndicator();
+			authScript.getLoggedOutIndicator();
+			return authScript;
 		} catch (Exception ignore) {
 			// The interface is optional, the AuthenticationScript will be checked after this one.
+			if(log.isDebugEnabled()){
+				log.debug("Script '"+script.getName()+"' is not a AuthenticationScriptV2 interface!", ignore);
+			}
 		}
 		return null;
 	}
@@ -788,10 +806,6 @@ public class ScriptBasedAuthenticationMethodType extends AuthenticationMethodTyp
 					throw new ApiException(ApiException.Type.BAD_SCRIPT_FORMAT, e.getMessage());
 				}
 
-				// Set the method, making sure that, if the type is different, things are changed
-				// accordingly
-				if (!context.getAuthenticationMethod().isSameType(method))
-					apiChangedAuthenticationMethodForContext(context.getIndex());
 				context.setAuthenticationMethod(method);
 			}
 		};

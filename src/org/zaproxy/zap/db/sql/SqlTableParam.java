@@ -52,7 +52,7 @@ public class SqlTableParam extends SqlAbstractTable implements TableParam {
         try {
 			if (!DbUtils.hasTable(conn, TABLE_NAME)) {
 			    // Need to create the table
-			    DbUtils.executeAndClose(conn.prepareStatement(DbSQL.getSQL("param.ps.addtable")));
+			    DbUtils.execute(conn, DbSQL.getSQL("param.ps.addtable"));
 			}
 		} catch (SQLException e) {
 			throw new DatabaseException(e);
@@ -70,8 +70,7 @@ public class SqlTableParam extends SqlAbstractTable implements TableParam {
 			psRead.getPs().setLong(1, urlId);
 			
 			try (ResultSet rs = psRead.getPs().executeQuery()) {
-				RecordParam result = build(rs);
-				return result;
+				return build(rs);
 			}
 		} catch (SQLException e) {
 			throw new DatabaseException(e);

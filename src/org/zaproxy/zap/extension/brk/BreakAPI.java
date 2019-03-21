@@ -36,6 +36,7 @@ import org.zaproxy.zap.extension.api.ApiResponse;
 import org.zaproxy.zap.extension.api.ApiResponseElement;
 import org.zaproxy.zap.extension.api.ApiView;
 import org.zaproxy.zap.extension.httppanel.Message;
+import org.zaproxy.zap.utils.ApiUtils;
 
 public class BreakAPI extends ApiImplementor {
 
@@ -113,13 +114,14 @@ public class BreakAPI extends ApiImplementor {
 	public ApiResponse handleApiAction(String name, JSONObject params) throws ApiException {
 		if (ACTION_BREAK.equals(name)) {
 			String type = params.getString(PARAM_TYPE).toLowerCase();
+			boolean state = ApiUtils.getBooleanParam(params, PARAM_STATE);
 			if (type.equals(VALUE_TYPE_HTTP_ALL)) {
-				extension.setBreakAllRequests(params.getBoolean(PARAM_STATE));
-				extension.setBreakAllResponses(params.getBoolean(PARAM_STATE));
+				extension.setBreakAllRequests(state);
+				extension.setBreakAllResponses(state);
 			} else if (type.equals(VALUE_TYPE_HTTP_REQUESTS)) {
-				extension.setBreakAllRequests(params.getBoolean(PARAM_STATE));
+				extension.setBreakAllRequests(state);
 			} else if (type.equals(VALUE_TYPE_HTTP_RESPONSES)) {
-				extension.setBreakAllResponses(params.getBoolean(PARAM_STATE));
+				extension.setBreakAllResponses(state);
 			} else {
 				throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, PARAM_TYPE +
 						" not in [" + VALUE_TYPE_HTTP_ALL +"," + VALUE_TYPE_HTTP_REQUESTS +"," +
@@ -127,7 +129,7 @@ public class BreakAPI extends ApiImplementor {
 			}
 			
 		} else if (ACTION_BREAK_ON_ID.equals(name)) {
-			extension.setBreakOnId(params.getString(PARAM_KEY), params.getString(PARAM_STATE).toLowerCase().equals("on"));
+			extension.setBreakOnId(params.getString(PARAM_KEY), params.getString(PARAM_STATE).equalsIgnoreCase("on"));
 
 		} else if (ACTION_CONTINUE.equals(name)) {
 			extension.getBreakpointManagementInterface().cont();
@@ -186,9 +188,9 @@ public class BreakAPI extends ApiImplementor {
 						params.getString(PARAM_STRING), 
 						params.getString(PARAM_LOCATION), 
 						params.getString(PARAM_MATCH), 
-						params.getBoolean(PARAM_INVERSE), 
-						params.getBoolean(PARAM_IGNORECASE));
-			} catch (Exception e) {
+						ApiUtils.getBooleanParam(params, PARAM_INVERSE), 
+						ApiUtils.getBooleanParam(params, PARAM_IGNORECASE));
+			} catch (IllegalArgumentException e) {
 				throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, e.getMessage());
 			}
 
@@ -198,9 +200,9 @@ public class BreakAPI extends ApiImplementor {
 						params.getString(PARAM_STRING), 
 						params.getString(PARAM_LOCATION), 
 						params.getString(PARAM_MATCH), 
-						params.getBoolean(PARAM_INVERSE), 
-						params.getBoolean(PARAM_IGNORECASE));
-			} catch (Exception e) {
+						ApiUtils.getBooleanParam(params, PARAM_INVERSE), 
+						ApiUtils.getBooleanParam(params, PARAM_IGNORECASE));
+			} catch (IllegalArgumentException e) {
 				throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, e.getMessage());
 			}
 

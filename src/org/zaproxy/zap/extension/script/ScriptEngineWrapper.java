@@ -30,8 +30,26 @@ public abstract class ScriptEngineWrapper {
 
 	private final ScriptEngineFactory factory;
 	
+	/**
+	 * Constructs a {@code ScriptEngineWrapper} with the given engine (to obtain a factory).
+	 *
+	 * @param engine an engine to obtain the corresponding {@code ScriptEngineFactory}.
+	 * @deprecated (TODO add version) Use {@link #ScriptEngineWrapper(ScriptEngineFactory)} instead.
+	 */
+	@Deprecated
 	public ScriptEngineWrapper(ScriptEngine engine) {
-		this.factory = engine.getFactory();
+		this(engine.getFactory());
+	}
+
+	/**
+	 * Constructs a {@code ScriptEngineWrapper} with the given engine factory.
+	 *
+	 * @param factory the factory to create {@code ScriptEngine}s and obtain engine data (for example, engine name, language).
+	 * @since TODO add version
+	 * @see #getEngine()
+	 */
+	public ScriptEngineWrapper(ScriptEngineFactory factory) {
+		this.factory = factory;
 	}
 	
 	public String getLanguageName() {
@@ -60,6 +78,25 @@ public abstract class ScriptEngineWrapper {
 
 	public List<String> getExtensions() {
 		return factory.getExtensions();
+	}
+
+	/**
+	 * Tells whether or not this engine should be visible to the user.
+	 * <p>
+	 * Engines that are not visible are not shown in the GUI nor listed through the API.
+	 * <p>
+	 * Engines are visible by default.
+	 *
+	 * @return {@code true} if the engine should be visible to the user, {@code false} otherwise.
+	 * @since TODO add version
+	 */
+	public boolean isVisible() {
+		// TODO remove the if statement once NullScriptEngineWrapper implements this method.
+		// NullScriptEngineWrapper is not a functional engine.
+		if ("Null".equals(getEngineName())) {
+			return false;
+		}
+		return true;
 	}
 	
 	public abstract boolean isRawEngine();

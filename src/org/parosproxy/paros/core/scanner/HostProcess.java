@@ -78,6 +78,11 @@
 // ZAP: 2017/07/18 Allow to obtain the (total) alert count.
 // ZAP: 2017/09/27 Allow to skip scanners by ID and don't allow to skip scanners already finished/skipped.
 // ZAP: 2017/10/05 Replace usage of Class.newInstance (deprecated in Java 9).
+// ZAP: 2017/11/29 Skip plugins if there's nothing to scan.
+// ZAP: 2017/12/29 Provide means to validate the redirections.
+// ZAP: 2018/01/01 Update initialisation of PluginStats.
+// ZAP: 2018/11/14 Log alert count when completed.
+// ZAP: 2019/01/19 Handle counting alerts raised by scan (Issue 3929).
 
 package org.parosproxy.paros.core.scanner;
 
@@ -95,18 +100,22 @@ import java.util.concurrent.TimeUnit;
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.common.ThreadPool;
+import org.parosproxy.paros.control.Control;
 import org.parosproxy.paros.db.DatabaseException;
 import org.parosproxy.paros.model.HistoryReference;
 import org.parosproxy.paros.network.ConnectionParam;
 import org.parosproxy.paros.network.HttpMalformedHeaderException;
 import org.parosproxy.paros.network.HttpMessage;
 import org.parosproxy.paros.network.HttpSender;
+import org.zaproxy.zap.extension.alert.ExtensionAlert;
 import org.zaproxy.zap.extension.ascan.ScanPolicy;
 import org.zaproxy.zap.extension.ruleconfig.RuleConfig;
 import org.zaproxy.zap.extension.ruleconfig.RuleConfigParam;
 import org.zaproxy.zap.model.SessionStructure;
 import org.zaproxy.zap.model.StructuralNode;
 import org.zaproxy.zap.model.TechSet;
+import org.zaproxy.zap.network.HttpRedirectionValidator;
+import org.zaproxy.zap.network.HttpRequestConfig;
 import org.zaproxy.zap.users.User;
 
 public class HostProcess implements Runnable {
@@ -152,6 +161,11 @@ public class HostProcess implements Runnable {
     private int alertCount;
 
     /**
+     * New alerts found during the scan in the current session.
+     */
+    private int newAlertCount = 0;
+
+    /**
      * The ID of the message to be scanned by {@link AbstractHostPlugin}s.
      * <p>
      * As opposed to {@link AbstractAppPlugin}s, {@code AbstractHostPlugin}s just require one message to scan as they run
@@ -167,6 +181,27 @@ public class HostProcess implements Runnable {
      * @see #messageIdToHostScan
      */
     private List<Integer> messagesIdsToAppScan;
+
+    /**
+     * The HTTP request configuration, uses a {@link HttpRedirectionValidator} that ensures the followed redirections are in
+     * scan's scope.
+     * <p>
+     * Lazily initialised.
+     * 
+     * @see #getRedirectRequestConfig()
+     * @see #redirectionValidator
+     */
+    private HttpRequestConfig redirectRequestConfig;
+
+    /**
+     * The redirection validator that ensures the followed redirections are in scan's scope.
+     * <p>
+     * Lazily initialised.
+     * 
+     * @see #getRedirectionValidator()
+     * @see #redirectRequestConfig
+     */
+    private HttpRedirectionValidator redirectionValidator;
     
     /**
      * Constructs a {@code HostProcess}, with no rules' configurations.
@@ -265,7 +300,7 @@ public class HostProcess implements Runnable {
             pluginFactory.reset();
             synchronized (mapPluginStats) {
                 for (Plugin plugin : pluginFactory.getPending()) {
-                    mapPluginStats.put(plugin.getId(), new PluginStats());
+                    mapPluginStats.put(plugin.getId(), new PluginStats(plugin.getName()));
                 }
             }
 
@@ -324,9 +359,13 @@ public class HostProcess implements Runnable {
      */
     private void logScanInfo() {
         StringBuilder strBuilder = new StringBuilder(150);
-        strBuilder.append("Scanning ");
-        strBuilder.append(nodeInScopeCount);
-        strBuilder.append(" node(s) ");
+        if (nodeInScopeCount != 0) {
+            strBuilder.append("Scanning ");
+            strBuilder.append(nodeInScopeCount);
+            strBuilder.append(" node(s) ");
+        } else {
+            strBuilder.append("No nodes to scan ");
+        }
         if (parentScanner.getJustScanInScope()) {
             strBuilder.append("[just in scope] ");
         }
@@ -335,13 +374,20 @@ public class HostProcess implements Runnable {
             strBuilder.append(" as ");
             strBuilder.append(user.getName());
         }
+        if (nodeInScopeCount == 0) {
+            strBuilder.append(", skipping all plugins.");
+        }
         log.info(strBuilder.toString());
     }
 
     private void processPlugin(final Plugin plugin) {
         mapPluginStats.get(plugin.getId()).start();
 
-        if (!plugin.targets(techSet)) {
+        if (nodeInScopeCount == 0) {
+            pluginSkipped(plugin, Constant.messages.getString("ascan.progress.label.skipped.reason.nonodes"));
+            pluginCompleted(plugin);
+            return;
+        } else if (!plugin.targets(techSet)) {
             pluginSkipped(plugin, Constant.messages.getString("ascan.progress.label.skipped.reason.techs"));
             pluginCompleted(plugin);
             return;
@@ -353,7 +399,7 @@ public class HostProcess implements Runnable {
         if (plugin instanceof AbstractHostPlugin) {
             checkPause();
 
-            if (messageIdToHostScan == -1 || isStop() || isSkipped(plugin) || !scanMessage(plugin, messageIdToHostScan)) {
+            if (isStop() || isSkipped(plugin) || !scanMessage(plugin, messageIdToHostScan)) {
                 // Mark the plugin as completed if it was not run so the scan process can continue as expected.
                 // The plugin might not be run, for example, if there was an error reading the message form DB.
                 pluginCompleted(plugin);
@@ -659,7 +705,7 @@ public class HostProcess implements Runnable {
     private void notifyHostComplete() {
         long diffTimeMillis = System.currentTimeMillis() - hostProcessStartTime;
         String diffTimeString = decimalFormat.format(diffTimeMillis / 1000.0) + "s";
-        log.info("completed host " + hostAndPort + " in " + diffTimeString);
+        log.info("completed host " + hostAndPort + " in " + diffTimeString + " with " + getAlertCount() + " alert(s) raised.");
         parentScanner.notifyHostComplete(hostAndPort);
     }
 
@@ -712,6 +758,11 @@ public class HostProcess implements Runnable {
     }
 
     public void alertFound(Alert alert) {
+        ExtensionAlert extensionAlertRef = Control.getSingleton().getExtensionLoader().getExtension(ExtensionAlert.class);
+        if (extensionAlertRef.isNewAlert(alert)) {
+            newAlertCount++;
+        }
+
         parentScanner.notifyAlertFound(alert);
 
         PluginStats pluginStats = mapPluginStats.get(alert.getPluginId());
@@ -719,6 +770,10 @@ public class HostProcess implements Runnable {
             pluginStats.incAlertCount();
         }
         alertCount++;
+    }
+
+    public int getNewAlertCount() {
+        return newAlertCount;
     }
 
     /**
@@ -741,6 +796,42 @@ public class HostProcess implements Runnable {
         }
         
         return analyser;
+    }
+
+    /**
+     * Gets the HTTP request configuration that ensures the followed redirections are in scan's scope.
+     *
+     * @return the HTTP request configuration, never {@code null}.
+     * @since TODO add version
+     * @see #getRedirectionValidator()
+     */
+    HttpRequestConfig getRedirectRequestConfig() {
+        if (redirectRequestConfig == null) {
+            redirectRequestConfig = HttpRequestConfig.builder().setRedirectionValidator(getRedirectionValidator()).build();
+        }
+        return redirectRequestConfig;
+    }
+
+    /**
+     * Gets the redirection validator that ensures the followed redirections are in scan's scope.
+     *
+     * @return the redirection validator, never {@code null}.
+     * @since TODO add version
+     * @see #getRedirectRequestConfig()
+     */
+    HttpRedirectionValidator getRedirectionValidator() {
+        if (redirectionValidator == null) {
+            redirectionValidator = redirection -> {
+                if (!nodeInScope(redirection.getEscapedURI())) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("Skipping redirection out of scan's scope: " + redirection);
+                    }
+                    return false;
+                }
+                return true;
+            };
+        }
+        return redirectionValidator;
     }
 
     public boolean handleAntiCsrfTokens() {
@@ -1023,7 +1114,7 @@ public class HostProcess implements Runnable {
 	}
 	
 	/**
-	 * Gets the request count of the plugin with the give ID.
+	 * Gets the request count of the plugin with the given ID.
 	 *
 	 * @param pluginId the ID of the plugin
 	 * @return the request count

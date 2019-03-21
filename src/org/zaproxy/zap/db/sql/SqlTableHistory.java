@@ -125,12 +125,12 @@ public class SqlTableHistory extends SqlAbstractTable implements TableHistory {
     private void updateTable(Connection connection) throws DatabaseException {
         try {
 			if (!DbUtils.hasColumn(connection, TABLE_NAME, TAG)) {
-			    DbUtils.executeAndClose(connection.prepareStatement(DbSQL.getSQL("history.ps.addtag")));
+			    DbUtils.execute(connection, DbSQL.getSQL("history.ps.addtag"));
 			}
 
 			// Add the NOTE column to the db if necessary
 			if (!DbUtils.hasColumn(connection, TABLE_NAME, NOTE)) {
-			    DbUtils.executeAndClose(connection.prepareStatement(DbSQL.getSQL("history.ps.addnote")));
+			    DbUtils.execute(connection, DbSQL.getSQL("history.ps.addnote"));
 			}
 			
 			/* TODO how to handle HSQLDB dependancy?? Need to parameterize somehow.. vvvvvvvvvvvv */ 
@@ -145,23 +145,25 @@ public class SqlTableHistory extends SqlAbstractTable implements TableHistory {
 			}
 
 			if (!DbUtils.hasColumn(connection, TABLE_NAME, RESPONSE_FROM_TARGET_HOST)) {
-			    DbUtils.executeAndClose(connection.prepareStatement(DbSQL.getSQL("history.ps.addrespfromtarget")));
-			    DbUtils.executeUpdateAndClose(connection.prepareStatement(DbSQL.getSQL("history.ps.setrespfromtarget")));
+			    DbUtils.execute(connection, DbSQL.getSQL("history.ps.addrespfromtarget"));
+			    DbUtils.executeUpdate(connection, DbSQL.getSQL("history.ps.setrespfromtarget"));
 			}
 			
 			int requestbodysizeindb = DbUtils.getColumnSize(connection, TABLE_NAME, REQBODY);
 			int responsebodysizeindb = DbUtils.getColumnSize(connection, TABLE_NAME, RESBODY);
 			try {	        
 			    if (requestbodysizeindb != this.configuredrequestbodysize && this.configuredrequestbodysize > 0) {
-			    	PreparedStatement stmt = connection.prepareStatement(DbSQL.getSQL("history.ps.changereqsize"));
-			    	stmt.setInt(1, this.configuredrequestbodysize);
-			    	DbUtils.executeAndClose(stmt);
+			    	try (PreparedStatement stmt = connection.prepareStatement(DbSQL.getSQL("history.ps.changereqsize"))){
+			    	    stmt.setInt(1, this.configuredrequestbodysize);
+			            stmt.execute();
+			        }
 			    }
 			    
 			    if (responsebodysizeindb != this.configuredresponsebodysize && this.configuredresponsebodysize > 0) {
-			    	PreparedStatement stmt = connection.prepareStatement(DbSQL.getSQL("history.ps.changerespsize"));
-			    	stmt.setInt(1, this.configuredresponsebodysize);
-			    	DbUtils.executeAndClose(stmt);
+                    try (PreparedStatement stmt = connection.prepareStatement(DbSQL.getSQL("history.ps.changerespsize"))){
+                        stmt.setInt(1, this.configuredresponsebodysize);
+                        stmt.execute();
+                    }
 			    }
 			}
 			catch (SQLException e) {
@@ -345,26 +347,40 @@ public class SqlTableHistory extends SqlAbstractTable implements TableHistory {
 	 */
     @Override
 	public List<Integer> getHistoryIds(long sessionId) throws DatabaseException {
-	    SqlPreparedStatementWrapper psGetAllHistoryIds = null;
-        try {
-		    psGetAllHistoryIds = DbSQL.getSingleton().getPreparedStatement( "history.ps.gethistoryids");
-		    List<Integer> v = new ArrayList<>();
-		    psGetAllHistoryIds.getPs().setLong(1, sessionId);
-		    try (ResultSet rs = psGetAllHistoryIds.getPs().executeQuery()) {
-		        while (rs.next()) {
-		            v.add(Integer.valueOf(rs.getInt(HISTORYID)));
-		        }
-		    }
-		    return v;
+    	return getHistoryIdsFromPreparedStatement((wrapper) -> {
+			wrapper.getPs().setLong(1, sessionId);
+		}, "history.ps.gethistoryids", null);
+    }
+
+	private List<Integer> getHistoryIdsFromPreparedStatement(PreparedStatementSetter preparedStatementSetter, String key, int... params) throws DatabaseException {
+		SqlPreparedStatementWrapper psGetHistoryIds = null;
+		try {
+
+			psGetHistoryIds = DbSQL.getSingleton().getPreparedStatement(key, params);
+			preparedStatementSetter.setParameter(psGetHistoryIds);
+			List<Integer> v = new ArrayList<>();
+			try (ResultSet rs = psGetHistoryIds.getPs().executeQuery()) {
+				while (rs.next()) {
+					v.add(rs.getInt(HISTORYID));
+				}
+			}
+			return v;
 		} catch (SQLException e) {
 			throw new DatabaseException(e);
 		} finally {
-			DbSQL.getSingleton().releasePreparedStatement(psGetAllHistoryIds);
+			DbSQL.getSingleton().releasePreparedStatement(psGetHistoryIds);
 		}
-        //return getHistoryIdsOfHistType(sessionId, null);
-    }
+	}
 
-    /* (non-Javadoc)
+	@Override
+	public List<Integer> getHistoryIdsStartingAt(long sessionId, int startAtHistoryId) throws DatabaseException {
+		return getHistoryIdsFromPreparedStatement((wrapper) -> {
+			wrapper.getPs().setLong(1, sessionId);
+			wrapper.getPs().setInt(2, startAtHistoryId);
+		}, "history.ps.gethistoryidsstartingat", null);
+	}
+
+	/* (non-Javadoc)
 	 * @see org.parosproxy.paros.db.TbleHistoryIf#getHistoryIdsOfHistType(long, int)
 	 */
     @Override
@@ -372,28 +388,27 @@ public class SqlTableHistory extends SqlAbstractTable implements TableHistory {
     	if (histTypes == null || histTypes.length == 0) {
     		return getHistoryIds(sessionId);
     	}
-    	
-	    SqlPreparedStatementWrapper psGetAllHistoryIdsIncTypes = null;
-        try {
-		    psGetAllHistoryIdsIncTypes = DbSQL.getSingleton().getPreparedStatement( "history.ps.gethistoryidsinctypes", histTypes.length);
-		    List<Integer> v = new ArrayList<>();
-		    psGetAllHistoryIdsIncTypes.getPs().setLong(1, sessionId);
-		    DbSQL.setSetValues(psGetAllHistoryIdsIncTypes.getPs(), 2, histTypes);
-		    try (ResultSet rs = psGetAllHistoryIdsIncTypes.getPs().executeQuery()) {
-		        while (rs.next()) {
-		            v.add(Integer.valueOf(rs.getInt(HISTORYID)));
-		        }
-		    }
-		    return v;
-		    
-		} catch (SQLException e) {
-			throw new DatabaseException(e);
-		} finally {
-			DbSQL.getSingleton().releasePreparedStatement(psGetAllHistoryIdsIncTypes);
-		}
+
+		return getHistoryIdsFromPreparedStatement((wrapper) -> {
+			wrapper.getPs().setLong(1, sessionId);
+			DbSQL.setSetValues(wrapper.getPs(), 2, histTypes);
+		}, "history.ps.gethistoryidsinctypes", histTypes.length);
     }
 
-    /* (non-Javadoc)
+	@Override
+	public List<Integer> getHistoryIdsOfHistTypeStartingAt(long sessionId, int startAtHistoryId, int... histTypes) throws DatabaseException {
+		if (histTypes == null || histTypes.length == 0) {
+			return getHistoryIds(sessionId);
+		}
+
+		return getHistoryIdsFromPreparedStatement((wrapper) -> {
+			wrapper.getPs().setLong(1, sessionId);
+			wrapper.getPs().setInt(2, startAtHistoryId);
+			DbSQL.setSetValues(wrapper.getPs(), 3, histTypes);
+		}, "history.ps.gethistoryidsinctypesstartingat", histTypes.length);
+	}
+
+	/* (non-Javadoc)
 	 * @see org.parosproxy.paros.db.TbleHistoryIf#getHistoryIdsExceptOfHistType(long, int)
 	 */
     @Override
@@ -401,26 +416,25 @@ public class SqlTableHistory extends SqlAbstractTable implements TableHistory {
     	if (histTypes == null || histTypes.length == 0) {
     		return getHistoryIds(sessionId);
     	}
-    	
-	    SqlPreparedStatementWrapper psGetAllHistoryIdsExcTypes = null;
-        try {
-		    List<Integer> v = new ArrayList<>();
-		    psGetAllHistoryIdsExcTypes = DbSQL.getSingleton().getPreparedStatement( "history.ps.gethistoryidsnottypes", histTypes.length);
-		    psGetAllHistoryIdsExcTypes.getPs().setLong(1, sessionId);
-		    DbSQL.setSetValues(psGetAllHistoryIdsExcTypes.getPs(), 2, histTypes);
-		    try (ResultSet rs = psGetAllHistoryIdsExcTypes.getPs().executeQuery()) {
-		        while (rs.next()) {
-		            v.add(Integer.valueOf(rs.getInt(HISTORYID)));
-		        }
-		    }
-		    return v;
-		    
-		} catch (SQLException e) {
-			throw new DatabaseException(e);
-		} finally {
-			DbSQL.getSingleton().releasePreparedStatement(psGetAllHistoryIdsExcTypes);
-		}
+
+		return getHistoryIdsFromPreparedStatement((wrapper) -> {
+			wrapper.getPs().setLong(1, sessionId);
+			DbSQL.setSetValues(wrapper.getPs(), 2, histTypes);
+		}, "history.ps.gethistoryidsnottypes", histTypes.length);
     }
+
+	@Override
+	public List<Integer> getHistoryIdsExceptOfHistTypeStartingAt(long sessionId, int startAtHistoryId, int... histTypes) throws DatabaseException {
+		if (histTypes == null || histTypes.length == 0) {
+			return getHistoryIds(sessionId);
+		}
+
+		return getHistoryIdsFromPreparedStatement((wrapper) -> {
+			wrapper.getPs().setLong(1, sessionId);
+			wrapper.getPs().setInt(2, startAtHistoryId);
+			DbSQL.setSetValues(wrapper.getPs(), 3, histTypes);
+		}, "history.ps.gethistoryidsnottypesstartingat", histTypes.length);
+	}
 
 	/* (non-Javadoc)
 	 * @see org.parosproxy.paros.db.TbleHistoryIf#getHistoryList(long, int, java.lang.String, boolean)
@@ -444,26 +458,26 @@ public class SqlTableHistory extends SqlAbstractTable implements TableHistory {
 				        matcher = pattern.matcher(rs.getString(REQHEADER));
 				        if (matcher.find()) {
 				            // ZAP: Changed to use the method Integer.valueOf.
-				            v.add(Integer.valueOf(rs.getInt(HISTORYID)));
+				            v.add(rs.getInt(HISTORYID));
 				            continue;
 				        }
 				        matcher = pattern.matcher(rs.getString(REQBODY));
 				        if (matcher.find()) {
 				            // ZAP: Changed to use the method Integer.valueOf.
-				            v.add(Integer.valueOf(rs.getInt(HISTORYID)));
+				            v.add(rs.getInt(HISTORYID));
 				            continue;
 				        }
 				    } else {
 				        matcher = pattern.matcher(rs.getString(RESHEADER));
 				        if (matcher.find()) {
 				            // ZAP: Changed to use the method Integer.valueOf.
-				            v.add(Integer.valueOf(rs.getInt(HISTORYID)));
+				            v.add(rs.getInt(HISTORYID));
 				            continue;
 				        }
 				        matcher = pattern.matcher(rs.getString(RESBODY));
 				        if (matcher.find()) {
 				            // ZAP: Changed to use the method Integer.valueOf.
-				            v.add(Integer.valueOf(rs.getInt(HISTORYID)));
+				            v.add(rs.getInt(HISTORYID));
 				            continue;
 				        }
 				    }
@@ -565,7 +579,7 @@ public class SqlTableHistory extends SqlAbstractTable implements TableHistory {
 		    psDelete = DbSQL.getSingleton().getPreparedStatement( "history.ps.delete");
 			int count = 0;
 			for (Integer id : ids) {
-			    psDelete.getPs().setInt(1, id.intValue());
+			    psDelete.getPs().setInt(1, id);
 			    psDelete.getPs().addBatch();
 			    count++;
 
@@ -794,4 +808,7 @@ public class SqlTableHistory extends SqlAbstractTable implements TableHistory {
         return lastInsertedIndex;
     }
 
+    private interface PreparedStatementSetter {
+		void setParameter(SqlPreparedStatementWrapper wrapper) throws SQLException;
+	}
 }

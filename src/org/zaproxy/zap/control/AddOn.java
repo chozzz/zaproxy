@@ -33,14 +33,18 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
+import java.util.ResourceBundle;
 import java.util.Set;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
 
 import org.apache.commons.configuration.SubnodeConfiguration;
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.SystemUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.log4j.Logger;
 import org.jgrapht.DirectedGraph;
 import org.jgrapht.alg.CycleDetector;
@@ -60,6 +64,8 @@ public class AddOn  {
 
 	/**
 	 * The name of the manifest file, contained in the add-ons.
+	 * <p>
+	 * The manifest is expected to be in the root of the ZIP file.
 	 * 
 	 * @since 2.6.0
 	 */
@@ -109,6 +115,112 @@ public class AddOn  {
 		 * dependency.
 		 */
 		SOFT_UNINSTALLATION_FAILED
+	}
+
+	/**
+	 * The result of checking if a file is a valid add-on.
+	 * 
+	 * @since TODO add version
+	 * @see AddOn#isValidAddOn(Path)
+	 */
+	public static class ValidationResult {
+
+		/**
+		 * The validity of the add-on.
+		 */
+		public enum Validity {
+			/**
+			 * The add-on is valid.
+			 * <p>
+			 * The result contains the {@link ValidationResult#getManifest() manifest} of the add-on.
+			 */
+			VALID,
+			/**
+			 * The file path is not valid.
+			 */
+			INVALID_PATH,
+			/**
+			 * The file does not have the expected extension {@value #FILE_EXTENSION}.
+			 */
+			INVALID_FILE_NAME,
+			/**
+			 * The file is not a regular file or is not readable.
+			 */
+			FILE_NOT_READABLE,
+			/**
+			 * There was an error reading the ZIP file.
+			 * <p>
+			 * The result contains the {@link ValidationResult#getException() exception}.
+			 */
+			UNREADABLE_ZIP_FILE,
+			/**
+			 * There was an error reading the file.
+			 * <p>
+			 * The result contains the {@link ValidationResult#getException() exception}.
+			 */
+			IO_ERROR_FILE,
+			/**
+			 * The ZIP file does not have the add-on manifest, {@value #MANIFEST_FILE_NAME}.
+			 * <p>
+			 * The result contains the {@link ValidationResult#getException() exception}.
+			 */
+			MISSING_MANIFEST,
+			/**
+			 * The manifest is not valid.
+			 * <p>
+			 * The result contains the {@link ValidationResult#getException() exception}.
+			 */
+			INVALID_MANIFEST,
+		};
+
+		private final Validity validity;
+		private final Exception exception;
+		private final ZapAddOnXmlFile manifest;
+
+		private ValidationResult(Validity validity) {
+			this(validity, null);
+		}
+
+		private ValidationResult(ZapAddOnXmlFile manifest) {
+			this(Validity.VALID, null, manifest);
+		}
+
+		private ValidationResult(Validity validity, Exception exception) {
+			this(validity, exception, null);
+		}
+
+		private ValidationResult(Validity validity, Exception exception, ZapAddOnXmlFile manifest) {
+			this.validity = validity;
+			this.exception = exception;
+			this.manifest = manifest;
+		}
+
+		/**
+		 * Gets the validity of the add-on.
+		 *
+		 * @return the validity of the add-on.
+		 */
+		public Validity getValidity() {
+			return validity;
+		}
+
+		/**
+		 * Gets the exception that occurred while validating the file.
+		 *
+		 * @return the exception, or {@code null} if none.
+		 */
+		public Exception getException() {
+			return exception;
+		}
+
+		/**
+		 * Gets the manifest of the add-on.
+		 *
+		 * @return the manifest of the add-on, if valid, {@code null} otherwise.
+		 */
+		public ZapAddOnXmlFile getManifest() {
+			return manifest;
+		}
 	}
 	
 	/**
@@ -183,8 +295,31 @@ public class AddOn  {
 	private List<String> files = Collections.emptyList();
 
 	private AddOnClassnames addOnClassnames = AddOnClassnames.ALL_ALLOWED;
+
+	private ClassLoader classLoader;
 	
 	private Dependencies dependencies;
+
+	/**
+	 * The data of the bundle declared in the manifest.
+	 * <p>
+	 * Never {@code null}.
+	 */
+	private BundleData bundleData = BundleData.EMPTY_BUNDLE;
+
+	/**
+	 * The resource bundle from the declaration in the manifest.
+	 * <p>
+	 * Might be {@code null}, if not declared.
+	 */
+	private ResourceBundle resourceBundle;
+
+	/**
+	 * The data for the HelpSet, declared in the manifest.
+	 * <p>
+	 * Never {@code null}.
+	 */
+	private HelpSetData helpSetData = HelpSetData.EMPTY_HELP_SET;
 
 	private static final Logger logger = Logger.getLogger(AddOn.class);
 	
@@ -257,30 +392,73 @@ public class AddOn  {
 	 * @return {@code true} if the given file is an add-on, {@code false} otherwise.
 	 * @since 2.6.0
 	 * @see #isAddOnFileName(String)
+	 * @see #isValidAddOn(Path)
 	 */
 	public static boolean isAddOn(Path file) {
+	    return isValidAddOn(file).getValidity() == ValidationResult.Validity.VALID;
+	}
+
+	/**
+	 * Tells whether or not the given file is a ZAP add-on.
+	 * 
+	 * @param file the file to be checked.
+	 * @return the result of the validation.
+	 * @since TODO add version
+	 * @see #isAddOn(Path)
+	 */
+	public static ValidationResult isValidAddOn(Path file) {
 		if (file == null || file.getNameCount() == 0) {
-			return false;
+			return new ValidationResult(ValidationResult.Validity.INVALID_PATH);
 		}
 
 		if (!isAddOnFileName(file.getFileName().toString())) {
-			return false;
+			return new ValidationResult(ValidationResult.Validity.INVALID_FILE_NAME);
 		}
 
 		if (!Files.isRegularFile(file) || !Files.isReadable(file)) {
-			return false;
+			return new ValidationResult(ValidationResult.Validity.FILE_NOT_READABLE);
 		}
 
 		try (ZipFile zip = new ZipFile(file.toFile())) {
-			return zip.getEntry(MANIFEST_FILE_NAME) != null;
-		} catch (Exception e) {
-			if (logger.isDebugEnabled()) {
-				logger.debug("Failed to obtain " + MANIFEST_FILE_NAME + " entry:", e);
+			ZipEntry manifest = zip.getEntry(MANIFEST_FILE_NAME);
+			if (manifest == null) {
+				return new ValidationResult(ValidationResult.Validity.MISSING_MANIFEST);
 			}
-			return false;
+
+			try (InputStream zis = zip.getInputStream(manifest)) {
+				try {
+					return new ValidationResult(new ZapAddOnXmlFile(zis));
+				} catch (Exception e) {
+					return new ValidationResult(ValidationResult.Validity.INVALID_MANIFEST, e);
+				}
+			}
+		} catch (ZipException e) {
+			return new ValidationResult(ValidationResult.Validity.UNREADABLE_ZIP_FILE, e);
+		} catch (Exception e) {
+			return new ValidationResult(ValidationResult.Validity.IO_ERROR_FILE, e);
 		}
 	}
 
+	/**
+	 * Convenience method that attempts to create an {@code AddOn} from the given file.
+	 * <p>
+	 * A warning is logged if the add-on is invalid and an error if an error occurred while creating it.
+	 * 
+	 * @param file the file of the add-on.
+	 * @return a container with the {@code AddOn}, or empty if not valid or an error occurred while creating it.
+	 * @since TODO add version
+	 */
+	public static Optional<AddOn> createAddOn(Path file) {
+		try {
+			return Optional.of(new AddOn(file));
+		} catch (AddOn.InvalidAddOnException e) {
+			logger.warn("Invalid add-on: " + file.toString(), e);
+		} catch (Exception e) {
+			logger.error("Failed to create an add-on from: " + file.toString(), e);
+		}
+		return Optional.empty();
+	}
+	
 	/**
 	 * Constructs an {@code AddOn} with the given file name.
 	 *
@@ -326,17 +504,19 @@ public class AddOn  {
 	 * The installation status of the add-on is 'not installed'.
 	 * 
 	 * @param file the file of the add-on
-	 * @throws IOException if the given {@code file} does not exist, does not have a valid add-on file name or an error occurred
-	 *             while reading the {@value #MANIFEST_FILE_NAME} ZIP file entry
+	 * @throws InvalidAddOnException (since TODO add version) if the given {@code file} does not exist, does not have a valid
+	 *             add-on file name, or an error occurred while reading the add-on manifest ({@value #MANIFEST_FILE_NAME}).
+	 * @throws IOException if an error occurred while reading/validating the file.
 	 * @see #isAddOn(Path)
 	 */
 	public AddOn(Path file) throws IOException {
-		if (! isAddOn(file)) {
-			throw new IOException("Invalid ZAP add-on file " + (file != null ? file.toAbsolutePath() : "[null]"));
+		ValidationResult result = isValidAddOn(file);
+		if (result.getValidity() != ValidationResult.Validity.VALID) {
+			throw new InvalidAddOnException(result);
 		}
 		this.id = extractAddOnId(file.getFileName().toString());
 		this.file = file.toFile();
-		loadManifestFile();
+		readZapAddOnXmlFile(result.getManifest());
 	}
 
 	private static String extractAddOnId(String fileName) {
@@ -355,31 +535,45 @@ public class AddOn  {
 
 				try (InputStream zis = zip.getInputStream(zapAddOnEntry)) {
 					ZapAddOnXmlFile zapAddOnXml = new ZapAddOnXmlFile(zis);
-
-					this.name = zapAddOnXml.getName();
-					this.version = zapAddOnXml.getVersion();
-					this.semVer = zapAddOnXml.getSemVer();
-					this.status = AddOn.Status.valueOf(zapAddOnXml.getStatus());
-					this.description = zapAddOnXml.getDescription();
-					this.changes = zapAddOnXml.getChanges();
-					this.author = zapAddOnXml.getAuthor();
-					this.notBeforeVersion = zapAddOnXml.getNotBeforeVersion();
-					this.notFromVersion = zapAddOnXml.getNotFromVersion();
-					this.dependencies = zapAddOnXml.getDependencies();
-
-					this.ascanrules = zapAddOnXml.getAscanrules();
-					this.extensions = zapAddOnXml.getExtensions();
-					this.extensionsWithDeps = zapAddOnXml.getExtensionsWithDeps();
-					this.files = zapAddOnXml.getFiles();
-					this.pscanrules = zapAddOnXml.getPscanrules();
-
-					this.addOnClassnames = zapAddOnXml.getAddOnClassnames();
-
-					hasZapAddOnEntry = true;
+					readZapAddOnXmlFile(zapAddOnXml);
 				}
 			}
 		}
 		
+	}
+	
+	private void readZapAddOnXmlFile(ZapAddOnXmlFile zapAddOnXml) {
+		this.name = zapAddOnXml.getName();
+		this.version = zapAddOnXml.getVersion();
+		this.semVer = zapAddOnXml.getSemVer();
+		this.status = AddOn.Status.valueOf(zapAddOnXml.getStatus());
+		this.description = zapAddOnXml.getDescription();
+		this.changes = zapAddOnXml.getChanges();
+		this.author = zapAddOnXml.getAuthor();
+		this.notBeforeVersion = zapAddOnXml.getNotBeforeVersion();
+		this.notFromVersion = zapAddOnXml.getNotFromVersion();
+		this.dependencies = zapAddOnXml.getDependencies();
+		this.info = createInfoUrl(zapAddOnXml.getUrl());
+
+		this.ascanrules = zapAddOnXml.getAscanrules();
+		this.extensions = zapAddOnXml.getExtensions();
+		this.extensionsWithDeps = zapAddOnXml.getExtensionsWithDeps();
+		this.files = zapAddOnXml.getFiles();
+		this.pscanrules = zapAddOnXml.getPscanrules();
+
+		this.addOnClassnames = zapAddOnXml.getAddOnClassnames();
+
+		String bundleBaseName = zapAddOnXml.getBundleBaseName();
+		if (!bundleBaseName.isEmpty()) {
+			bundleData = new BundleData(bundleBaseName, zapAddOnXml.getBundlePrefix());
+		}
+		
+		String helpSetBaseName = zapAddOnXml.getHelpSetBaseName();
+		if (!helpSetBaseName.isEmpty()) {
+			this.helpSetData = new HelpSetData(helpSetBaseName, zapAddOnXml.getHelpSetLocaleToken());
+		}
+
+		hasZapAddOnEntry = true;
 	}
 
 	/**
@@ -414,18 +608,21 @@ public class AddOn  {
 		this.size = addOnData.getSize();
 		this.notBeforeVersion = addOnData.getNotBeforeVersion();
 		this.notFromVersion = addOnData.getNotFromVersion();
-		if (addOnData.getInfo() != null && !addOnData.getInfo().isEmpty()) {
-			try {
-				this.info = new URL(addOnData.getInfo());
-			} catch (Exception ignore) {
-				if (logger.isDebugEnabled()) {
-					logger.debug("Wrong info URL for add-on \"" + name + "\":", ignore);
-				}
-			}
-		}
+		this.info = createInfoUrl(addOnData.getInfo());
 		this.hash = addOnData.getHash();
 		
 		loadManifestFile();
+	}
+
+	private URL createInfoUrl(String url) {
+		if (url != null && !url.isEmpty()) {
+			try {
+				return new URL(url);
+			} catch (Exception e) {
+				logger.warn("Invalid info URL for add-on \"" + id + "\":", e);
+			}
+		}
+		return null;
 	}
 
 	public String getId() {
@@ -552,6 +749,28 @@ public class AddOn  {
 	
 	public void setAuthor(String author) {
 		this.author = author;
+	}
+
+	/**
+	 * Gets the class loader of the add-on.
+	 *
+	 * @return the class loader of the add-on, {@code null} if the add-on is not installed.
+	 * @since TODO add version
+	 */
+	public ClassLoader getClassLoader() {
+		return classLoader;
+	}
+
+	/**
+	 * Sets the class loader of the add-on.
+	 * <p>
+	 * <strong>Note:</strong> This method should be called only by bootstrap classes.
+	 *
+	 * @param classLoader the class loader of the add-on, might be {@code null}.
+	 * @since TODO add version
+	 */
+	public void setClassLoader(ClassLoader classLoader) {
+		this.classLoader = classLoader;
 	}
 
 	/**
@@ -899,10 +1118,23 @@ public class AddOn  {
 		if (! this.isSameAddOn(addOn)) {
 			throw new IllegalArgumentException("Different addons: " + this.getId() + " != " + addOn.getId());
 		}
-		if (this.getVersion().compareTo(addOn.getVersion()) > 0) {
+		int result = this.getVersion().compareTo(addOn.getVersion());
+		if (result != 0) {
+			return result > 0;
+		}
+
+		result = this.getStatus().compareTo(addOn.getStatus());
+		if (result != 0) {
+			return result > 0;
+		}
+
+		if (getFile() == null) {
+			return false;
+		}
+		if (addOn.getFile() == null) {
 			return true;
 		}
-		return this.getStatus().ordinal() > addOn.getStatus().ordinal();
+		return getFile().lastModified() > addOn.getFile().lastModified();
 	}
 	
 	/**
@@ -1209,9 +1441,6 @@ public class AddOn  {
      * @since 2.4.0
      */
     public boolean isExtensionLoaded(String classname) {
-        List<Extension> allExtensions = new ArrayList<>(getLoadedExtensions().size() + getLoadedExtensionsWithDeps().size());
-        allExtensions.addAll(getLoadedExtensions());
-        allExtensions.addAll(getLoadedExtensionsWithDeps());
         for (Extension extension : getLoadedExtensions()) {
             if (classname.equals(extension.getClass().getCanonicalName())) {
                 return true;
@@ -1269,7 +1498,7 @@ public class AddOn  {
 		}
 		
 		if (zrc.compare(notBeforeRelease, v2_4) < 0) {
-			// Dont load any add-ons that imply they are prior to 2.4.0 - they probably wont work
+			// Don't load any add-ons that imply they are prior to 2.4.0 - they probably wont work
 			return false;
 		}
 		if (this.notFromVersion != null && this.notFromVersion.length() > 0) {
@@ -1307,6 +1536,50 @@ public class AddOn  {
 		return hash;
 	}
 	
+	/**
+	 * Gets the data of the bundle declared in the manifest.
+	 *
+	 * @return the bundle data, never {@code null}.
+	 * @since TODO add version
+	 * @see #getResourceBundle()
+	 */
+	public BundleData getBundleData() {
+		return bundleData;
+	}
+
+	/**
+	 * Gets the resource bundle of the add-on.
+	 *
+	 * @return the resource bundle, or {@code null} if none.
+	 * @since TODO add version
+	 */
+	public ResourceBundle getResourceBundle() {
+		return resourceBundle;
+	}
+
+	/**
+	 * Sets the resource bundle of the add-on.
+	 * <p>
+	 * <strong>Note:</strong> This method should be called only by bootstrap classes.
+	 *
+	 * @param resourceBundle the resource bundle of the add-on, might be {@code null}.
+	 * @since TODO add version
+	 * @see #getBundleData()
+	 */
+	public void setResourceBundle(ResourceBundle resourceBundle) {
+		this.resourceBundle = resourceBundle;
+	}
+
+	/**
+	 * Gets the data for the HelpSet, declared in the manifest.
+	 *
+	 * @return the HelpSet data, never {@code null}.
+	 * @since TODO add version
+	 */
+	public HelpSetData getHelpSetData() {
+		return helpSetData;
+	}
+
 	/**
 	 * Returns the IDs of the add-ons dependencies, an empty collection if none.
 	 *
@@ -1723,6 +1996,149 @@ public class AddOn  {
 		public String getClassname() {
 			return classname;
 		}
+	}
+
+	/**
+	 * The data of the bundle declared in the manifest of an add-on.
+	 * <p>
+	 * Used to load a {@link ResourceBundle}.
+	 *
+	 * @since TODO add version
+	 */
+	public static final class BundleData {
+
+		private static final BundleData EMPTY_BUNDLE = new BundleData();
+
+		private final String baseName;
+		private final String prefix;
+
+		private BundleData() {
+			this("", "");
+		}
+
+		private BundleData(String baseName, String prefix) {
+			this.baseName = baseName;
+			this.prefix = prefix;
+		}
+
+		/**
+		 * Tells whether or not the the bundle data is empty.
+		 * <p>
+		 * An empty {@code BundleData} does not contain any information to load a {@link ResourceBundle}.
+		 *
+		 * @return {@code true} if empty, {@code false} otherwise.
+		 */
+		public boolean isEmpty() {
+			return this == EMPTY_BUNDLE;
+		}
+
+		/**
+		 * Gets the base name of the bundle.
+		 *
+		 * @return the base name, or empty if not defined.
+		 */
+		public String getBaseName() {
+			return baseName;
+		}
+
+		/**
+		 * Gets the prefix of the bundle, to add into a
+		 * {@link org.zaproxy.zap.utils.I18N#addMessageBundle(String, ResourceBundle) I18N}.
+		 *
+		 * @return the prefix, or empty if not defined.
+		 */
+		public String getPrefix() {
+			return prefix;
+		}
+	}
+
+	/**
+	 * The data to load a {@link javax.help.HelpSet HelpSet}, declared in the manifest of an add-on.
+	 * <p>
+	 * Used to dynamically add/remove the help of the add-on.
+	 *
+	 * @since TODO add version
+	 */
+	public static final class HelpSetData {
+
+		private static final HelpSetData EMPTY_HELP_SET = new HelpSetData();
+
+		private final String baseName;
+		private final String localeToken;
+
+		private HelpSetData() {
+			this("", "");
+		}
+
+		private HelpSetData(String baseName, String localeToken) {
+			this.baseName = baseName;
+			this.localeToken = localeToken;
+		}
+
+		/**
+		 * Tells whether or not the the HelpSet data is empty.
+		 * <p>
+		 * An empty {@code HelpSetData} does not contain any information to load the help.
+		 *
+		 * @return {@code true} if empty, {@code false} otherwise.
+		 */
+		public boolean isEmpty() {
+			return this == EMPTY_HELP_SET;
+		}
+
+		/**
+		 * Gets the base name of the HelpSet file.
+		 *
+		 * @return the base name, or empty if not defined.
+		 */
+		public String getBaseName() {
+			return baseName;
+		}
+
+		/**
+		 * Gets the locale token.
+		 *
+		 * @return the locale token, or empty if not defined.
+		 */
+		public String getLocaleToken() {
+			return localeToken;
+		}
+	}
+
+	/**
+	 * An {@link IOException} that indicates that a file is not a valid add-on.
+	 *
+	 * @since TODO add version
+	 * @see #getValidationResult()
+	 */
+	public static class InvalidAddOnException extends IOException {
+
+		private static final long serialVersionUID = 1L;
+
+		private final ValidationResult validationResult;
+
+		private InvalidAddOnException(ValidationResult validationResult) {
+			super(getRootCauseMessage(validationResult), validationResult.getException());
+			this.validationResult = validationResult;
+		}
+
+		/**
+		 * Gets the result of validating the add-on.
+		 *
+		 * @return the result, never {@code null}.
+		 */
+		public ValidationResult getValidationResult() {
+			return validationResult;
+		}
+	}
+
+	private static String getRootCauseMessage(ValidationResult validationResult) {
+		Exception exception = validationResult.getException();
+		if (exception == null) {
+			return validationResult.getValidity().toString();
+		}
+		Throwable root = ExceptionUtils.getRootCause(exception);
+		return root == null ? exception.getLocalizedMessage() : root.getLocalizedMessage();
 	}
 
 	private static int getJavaVersion(String javaVersion) {

@@ -20,18 +20,18 @@ package org.zaproxy.zap.extension.api;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
-
-import net.sf.json.JSONObject;
 
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.model.Model;
+import org.parosproxy.paros.model.SiteNode;
 import org.zaproxy.zap.authentication.AuthenticationMethod;
 import org.zaproxy.zap.authentication.AuthenticationMethodType;
-import org.zaproxy.zap.extension.api.ApiResponseElement;
 import org.zaproxy.zap.extension.api.ApiException.Type;
 import org.zaproxy.zap.extension.authorization.AuthorizationDetectionMethod;
 import org.zaproxy.zap.model.Context;
@@ -39,6 +39,11 @@ import org.zaproxy.zap.model.IllegalContextNameException;
 import org.zaproxy.zap.model.Tech;
 import org.zaproxy.zap.model.TechSet;
 import org.zaproxy.zap.utils.ApiUtils;
+import org.zaproxy.zap.utils.JsonUtil;
+
+import net.sf.json.JSONArray;
+import net.sf.json.JSONException;
+import net.sf.json.JSONObject;
 
 public class ContextAPI extends ApiImplementor {
 
@@ -46,8 +51,9 @@ public class ContextAPI extends ApiImplementor {
 
     private static final String PREFIX = "context";
     private static final String TECH_NAME = "technologyName";
-    private static final String EXCLUDE_FROM_CONTEXT_REGEX = "excludeFromContext";
-    private static final String INCLUDE_IN_CONTEXT_REGEX = "includeInContext";
+    private static final String ACTION_EXCLUDE_FROM_CONTEXT_REGEX = "excludeFromContext";
+    private static final String ACTION_INCLUDE_IN_CONTEXT_REGEX = "includeInContext";
+    private static final String ACTION_SET_CONTEXT_REGEXS = "setContextRegexs";
     private static final String ACTION_NEW_CONTEXT = "newContext";
     private static final String ACTION_REMOVE_CONTEXT = "removeContext";
     private static final String ACTION_SET_CONTEXT_IN_SCOPE = "setContextInScope";
@@ -64,7 +70,10 @@ public class ContextAPI extends ApiImplementor {
     private static final String VIEW_ALL_TECHS = "technologyList";
 	private static final String VIEW_INCLUDED_TECHS = "includedTechnologyList";
 	private static final String VIEW_EXCLUDED_TECHS = "excludedTechnologyList";
+    private static final String VIEW_URLS = "urls";
     private static final String REGEX_PARAM = "regex";
+    private static final String INC_REGEXS_PARAM = "incRegexs";
+    private static final String EXC_REGEXS_PARAM = "excRegexs";
     private static final String CONTEXT_NAME = "contextName";
     private static final String IN_SCOPE = "booleanInScope";
     private static final String CONTEXT_FILE_PARAM = "contextFile";
@@ -79,8 +88,10 @@ public class ContextAPI extends ApiImplementor {
         contextNameOnlyParam.add((CONTEXT_NAME));
         String[] contextNameAndTechNames = new String[] { CONTEXT_NAME, PARAM_TECH_NAMES };
 
-        this.addApiAction(new ApiAction(EXCLUDE_FROM_CONTEXT_REGEX, contextNameAndRegexParam));
-        this.addApiAction(new ApiAction(INCLUDE_IN_CONTEXT_REGEX, contextNameAndRegexParam));
+        this.addApiAction(new ApiAction(ACTION_EXCLUDE_FROM_CONTEXT_REGEX, contextNameAndRegexParam));
+        this.addApiAction(new ApiAction(ACTION_INCLUDE_IN_CONTEXT_REGEX, contextNameAndRegexParam));
+        this.addApiAction(new ApiAction(ACTION_SET_CONTEXT_REGEXS, 
+                new String[] {CONTEXT_NAME, INC_REGEXS_PARAM, EXC_REGEXS_PARAM}));
         this.addApiAction(new ApiAction(ACTION_NEW_CONTEXT, contextNameOnlyParam));
         this.addApiAction(new ApiAction(ACTION_REMOVE_CONTEXT, contextNameOnlyParam));
         this.addApiAction(new ApiAction(ACTION_EXPORT_CONTEXT, new String[] {CONTEXT_NAME, CONTEXT_FILE_PARAM}, null));
@@ -102,6 +113,7 @@ public class ContextAPI extends ApiImplementor {
         this.addApiView(new ApiView(VIEW_ALL_TECHS));
 		this.addApiView(new ApiView(VIEW_INCLUDED_TECHS, contextNameOnlyParam));
 		this.addApiView(new ApiView(VIEW_EXCLUDED_TECHS, contextNameOnlyParam));
+		this.addApiView(new ApiView(VIEW_URLS, contextNameOnlyParam));
     }
 
     @Override
@@ -120,20 +132,38 @@ public class ContextAPI extends ApiImplementor {
         File f;
         
         switch(name) {
-        case EXCLUDE_FROM_CONTEXT_REGEX:
+        case ACTION_EXCLUDE_FROM_CONTEXT_REGEX:
         	try {
 				addExcludeToContext(getContext(params), params.getString(REGEX_PARAM));
 			} catch (IllegalArgumentException e) {
 	            throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, REGEX_PARAM, e);
 			}
         	break;
-        case INCLUDE_IN_CONTEXT_REGEX:
+        case ACTION_INCLUDE_IN_CONTEXT_REGEX:
             try {
                 addIncludeToContext(getContext(params), params.getString(REGEX_PARAM));
             } catch (IllegalArgumentException e) {
                 throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, REGEX_PARAM, e);
             }
         	break;
+        case ACTION_SET_CONTEXT_REGEXS:
+            context = getContext(params);
+            JSONArray incRegexs;
+            JSONArray excRegexs;
+            try {
+                incRegexs = JSONArray.fromObject(params.get(INC_REGEXS_PARAM));
+                context.setIncludeInContextRegexs(JsonUtil.toStringList(incRegexs));
+            } catch (JSONException e1) {
+                throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, INC_REGEXS_PARAM);
+            }
+            try {
+                excRegexs = JSONArray.fromObject(params.get(EXC_REGEXS_PARAM));
+                context.setExcludeFromContextRegexs(JsonUtil.toStringList(excRegexs));
+            } catch (Exception e1) {
+                throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, EXC_REGEXS_PARAM);
+            }
+            Model.getSingleton().getSession().saveContext(context);
+            break;
         case ACTION_NEW_CONTEXT:
             String contextName = params.getString(CONTEXT_NAME);
             try {
@@ -258,10 +288,18 @@ public class ContextAPI extends ApiImplementor {
         
         switch(name) {
         case VIEW_EXCLUDE_REGEXS:
-        	result = new ApiResponseElement(name, getContext(params).getExcludeFromContextRegexs().toString());
+            resultList = new ApiResponseList(name);
+            for (String regex : getContext(params).getExcludeFromContextRegexs()) {
+                resultList.addItem(new ApiResponseElement(REGEX_PARAM, regex));
+            }
+            result = resultList;
         	break;
         case VIEW_INCLUDE_REGEXS:
-        	result = new ApiResponseElement(name, getContext(params).getIncludeInContextRegexs().toString());
+            resultList = new ApiResponseList(name);
+            for (String regex : getContext(params).getIncludeInContextRegexs()) {
+                resultList.addItem(new ApiResponseElement(REGEX_PARAM, regex));
+            }
+            result = resultList;
         	break;
         case VIEW_CONTEXT_LIST:
             resultList = new ApiResponseList(name);
@@ -293,6 +331,18 @@ public class ContextAPI extends ApiImplementor {
 			techSet = getContext(params).getTechSet();
 			for(Tech tech : techSet.getExcludeTech()) {
 				resultList.addItem(new ApiResponseElement(TECH_NAME, tech.toString()));
+			}
+			result = resultList;
+			break;
+		case VIEW_URLS:
+			resultList = new ApiResponseList(name);
+			Set<String> addedUrls = new HashSet<>();
+			for (SiteNode node : getContext(params).getNodesInContextFromSiteTree()) {
+				String uri = node.getHistoryReference().getURI().toString();
+				if (!addedUrls.contains(uri)) {
+					resultList.addItem(new ApiResponseElement("url", uri));
+					addedUrls.add(uri);
+				}
 			}
 			result = resultList;
 			break;
@@ -329,8 +379,8 @@ public class ContextAPI extends ApiImplementor {
 		fields.put("id", Integer.toString(c.getIndex()));
 		fields.put("description", c.getDescription());
 		fields.put("inScope", Boolean.toString(c.isInScope()));
-		fields.put("excludeRegexs", c.getExcludeFromContextRegexs().toString());
-		fields.put("includeRegexs", c.getIncludeInContextRegexs().toString());
+		fields.put("excludeRegexs", jsonEncodeList(c.getExcludeFromContextRegexs()));
+		fields.put("includeRegexs", jsonEncodeList(c.getIncludeInContextRegexs()));
 		
 		AuthenticationMethod authenticationMethod = c.getAuthenticationMethod();
 		if(authenticationMethod != null){
@@ -355,6 +405,14 @@ public class ContextAPI extends ApiImplementor {
 		return new ApiResponseSet<String>("context", fields);
 	}
 	
+	private String jsonEncodeList(List<String> list) {
+	    JSONArray js = new JSONArray();
+	    for (String item : list) {
+	        js.add(item);
+	    }
+	    return js.toString();
+	}
+	
 	/**
 	 * Gets the tech that matches the techName
 	 * or throws an exception if no tech matches
@@ -364,11 +422,12 @@ public class ContextAPI extends ApiImplementor {
 	 * @throws ApiException the api exception
 	 */
 	private Tech getTech(String techName) throws ApiException {
+		String trimmedTechName = techName.trim();
 		for(Tech tech : Tech.builtInTech) {
-			if (tech.toString().equalsIgnoreCase(techName))
+			if (tech.toString().equalsIgnoreCase(trimmedTechName))
 				return tech;
 		}
 		throw new ApiException(Type.ILLEGAL_PARAMETER, 
-				"The tech " + techName + " does not exist");
+				"The tech '" + trimmedTechName + "' does not exist");
 	}
 }

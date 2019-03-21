@@ -49,6 +49,7 @@ import org.zaproxy.zap.extension.alert.ExtensionAlert;
 import org.zaproxy.zap.extension.pscan.scanner.RegexAutoTagScanner;
 import org.zaproxy.zap.extension.script.ExtensionScript;
 import org.zaproxy.zap.extension.script.ScriptType;
+import org.zaproxy.zap.view.ScanStatus;
 
 public class ExtensionPassiveScan extends ExtensionAdaptor implements SessionChangedListener {
 
@@ -61,6 +62,7 @@ public class ExtensionPassiveScan extends ExtensionAdaptor implements SessionCha
     private PassiveScanThread pst = null;
     private boolean passiveScanEnabled;
     private PassiveScanParam passiveScanParam;
+    private ScanStatus scanStatus = null;
     private static final List<Class<? extends Extension>> DEPENDENCIES;
 
     static {
@@ -106,6 +108,7 @@ public class ExtensionPassiveScan extends ExtensionAdaptor implements SessionCha
             extensionHook.getHookView().addOptionPanel(getPassiveScannerOptionsPanel());
             extensionHook.getHookView().addOptionPanel(getOptionsPassiveScan(getPassiveScanThread()));
             extensionHook.getHookView().addOptionPanel(getPolicyPanel());
+            View.getSingleton().getMainFrame().getMainFooterPanel().addFooterToolbarRightLabel(getScanStatus().getCountLabel());
         }
 
         ExtensionScript extScript = Control.getSingleton().getExtensionLoader().getExtension(ExtensionScript.class);
@@ -128,6 +131,18 @@ public class ExtensionPassiveScan extends ExtensionAdaptor implements SessionCha
     @Override
     public void optionsLoaded() {
         getPassiveScannerList().setAutoTagScanners(getPassiveScanParam().getAutoTagScanners());
+    }
+
+    @Override
+    public List<String> getActiveActions() {
+        int recordsToScan = getRecordsToScan();
+        if (recordsToScan == 0) {
+            return Collections.emptyList();
+        }
+
+        List<String> activeActions = new ArrayList<>(1);
+        activeActions.add(Constant.messages.getString("pscan.activeAction", recordsToScan));
+        return activeActions;
     }
 
     /**
@@ -295,7 +310,7 @@ public class ExtensionPassiveScan extends ExtensionAdaptor implements SessionCha
         return scannerList;
     }
 
-    protected List<PluginPassiveScanner> getPluginPassiveScanners() {
+    public List<PluginPassiveScanner> getPluginPassiveScanners() {
         List<PluginPassiveScanner> pluginPassiveScanners = new ArrayList<>();
         for (PassiveScanner scanner : getPassiveScannerList().list()) {
             if ((scanner instanceof PluginPassiveScanner) && !(scanner instanceof RegexAutoTagScanner)) {
@@ -472,13 +487,30 @@ public class ExtensionPassiveScan extends ExtensionAdaptor implements SessionCha
     @Override
     public void sessionChanged(Session session) {
         startPassiveScanThread();
+        if (View.isInitialised()) {
+            getScanStatus().setScanCount(0);
+        }
     }
 
     private void startPassiveScanThread() {
         if (passiveScanEnabled && pst == null) {
-            // Will create a new thread if one doesnt exist
+            // Will create a new thread if one doesn't exist
             getPassiveScanThread();
         }
+    }
+
+    public String getCurrentRuleName() {
+        return this.getPassiveScanThread().getCurrentRuleName();
+    }
+
+    
+    public String getCurrentUrl() {
+        return this.getPassiveScanThread().getCurrentUrl();
+    }
+
+    
+    public long getCurrentRuleStartTime() {
+        return this.getPassiveScanThread().getCurrentRuleStartTime();
     }
 
     @Override
@@ -547,6 +579,16 @@ public class ExtensionPassiveScan extends ExtensionAdaptor implements SessionCha
             }
         }
 	}
+
+    protected ScanStatus getScanStatus() {
+        if (scanStatus == null) {
+            scanStatus = new ScanStatus(
+                    new ImageIcon(
+                        ExtensionPassiveScan.class.getResource("/resource/icon/16/pscan.png")),
+                        Constant.messages.getString("pscan.footer.label"));
+        }
+        return scanStatus;
+    }
 
     @Override
     public boolean supportsLowMemory() {

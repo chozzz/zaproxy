@@ -31,19 +31,25 @@
 // ZAP: 2017/08/16 Tidy up usage of CertificateView.
 // ZAP: 2017/08/16 Show error message if failed to activate the certificate.
 // ZAP: 2017/08/17 Reduce code duplication when showing cert/keystore errors
+// ZAP: 2017/12/12 Use first alias by default (Issue 3879).
+// ZAP: 2017/12/13 Do not allow to edit the name/key of active cert.
+// ZAP: 2018/02/14 Remove unnecessary boxing / unboxing
+// ZAP: 2018/03/29 Use FileNameExtensionFilter.
+// ZAP: 2018/07/12 Fallback to bundled drivers.xml file.
+// ZAP: 2018/09/19 GUI support for setting client certificate from CLI
 
 package org.parosproxy.paros.extension.option;
 
 //TODO: Buttons should be gray
 import java.awt.CardLayout;
-import java.io.File;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.KeyStoreException;
 import java.security.ProviderException;
 import java.security.cert.Certificate;
-import java.util.Observable;
-import java.util.Observer;
 
 import javax.swing.DefaultListModel;
 import javax.swing.JDialog;
@@ -54,7 +60,7 @@ import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
-import javax.swing.filechooser.FileFilter;
+import javax.swing.filechooser.FileNameExtensionFilter;
 
 import org.apache.log4j.Logger;
 import org.jdesktop.swingx.JXHyperlink;
@@ -72,7 +78,7 @@ import ch.csnc.extension.ui.CertificateView;
 import ch.csnc.extension.ui.DriversView;
 import ch.csnc.extension.util.DriverConfiguration;
 
-public class OptionsCertificatePanel extends AbstractParamPanel implements Observer{
+public class OptionsCertificatePanel extends AbstractParamPanel {
 
 	private static final long serialVersionUID = 4350957038174673492L;
 	
@@ -120,6 +126,8 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 	
 	// Issue 182
 	private boolean retry = true;
+	// Used if certificate is set from commandline
+	private boolean overrideEnableClientCertificate = false;
 	
 	// Keep track of login attempts on PKCS11 smartcards to avoid blocking the smartcard
 	private static int login_attempts = 0;
@@ -143,22 +151,34 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 		aliasTableModel = new AliasTableModel(contextManager);
 
 		this.setLayout(new CardLayout());
-		this.setName(Constant.messages.getString("options.cert.title.cert"));
+		this.setName(Constant.messages.getString("options.cert.title"));
 
 		JPanel certificatePanel = getPanelCertificate();
 		this.add(certificatePanel, certificatePanel.getName());
 
-		driverConfig = new DriverConfiguration(new File(Constant.getZapInstall(), "xml/drivers.xml"));
+		driverConfig = createDriverConfiguration();
 		updateDriverComboBox();
-		driverConfig.addObserver(this);
+		driverConfig.addChangeListener(e -> updateDriverComboBox());
 
 		Certificate cert =contextManager.getDefaultCertificate();
 		if(cert!=null) {
 			certificateTextField.setText(cert.toString());
 		}
+		
+		if(contextManager.getKeyStoreCount() != 0) {
+			overrideEnableClientCertificate = true;
+		}
 
 	}
 
+	private static DriverConfiguration createDriverConfiguration() {
+		String fileName = "drivers.xml";
+		Path path = Paths.get(Constant.getZapInstall(), "xml", fileName);
+		if (Files.exists(path)) {
+			return new DriverConfiguration(path.toFile());
+		}
+		return new DriverConfiguration(OptionsCertificatePanel.class.getResource("/org/zaproxy/zap/resources/" + fileName));
+	}
 
 	private void updateDriverComboBox() {
 		driverComboBox.removeAllItems();
@@ -475,6 +495,7 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 			certificateLabel.setText(Constant.messages.getString("options.cert.label.activecerts"));
 
 			certificateTextField.setEnabled(false);
+			certificateTextField.setEditable(false);
 
 			showActiveCertificateButton.setText("->");
 			showActiveCertificateButton.setActionCommand(">");
@@ -597,12 +618,12 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 				return;
 			}
 			
-			int slot = driverConfig.getSlots().get(indexSelectedDriver).intValue();
+			int slot = driverConfig.getSlots().get(indexSelectedDriver);
 			if (slot < 0) {
 				return;
 			}
 			
-			int slotListIndex = driverConfig.getSlotIndexes().get(indexSelectedDriver).intValue();
+			int slotListIndex = driverConfig.getSlotIndexes().get(indexSelectedDriver);
 			if (slotListIndex < 0) {
 				return;
 			}
@@ -637,7 +658,7 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 			retry = true;
 
 			certificatejTabbedPane.setSelectedIndex(0);
-			selectFirstAliasOfKeyStore(ksIndex);
+			activateFirstOnlyAliasOfKeyStore(ksIndex);
 
 			driverComboBox.setSelectedIndex(-1);
 			pkcs11PasswordField.setText("");
@@ -709,7 +730,7 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 
 	}//GEN-LAST:event_addPkcs11ButtonActionPerformed
 
-	private void selectFirstAliasOfKeyStore(int ksIndex) {
+	private void activateFirstOnlyAliasOfKeyStore(int ksIndex) {
 		if (ksIndex < 0 || ksIndex >= keyStoreList.getModel().getSize()) {
 			return;
 		}
@@ -717,7 +738,16 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 		keyStoreList.setSelectedIndex(ksIndex);
 		if (aliasTable.getRowCount() != 0) {
 			aliasTable.setRowSelectionInterval(0, 0);
+
+			if (aliasTable.getRowCount() == 1 && !isCertActive()) {
+				setActiveAction();
+			}
 		}
+	}
+
+	private boolean isCertActive() {
+		String currentKey = contextManager.getDefaultKey();
+		return currentKey != null && !currentKey.isEmpty();
 	}
 
 	private void showErrorMessageSunPkcs11ProviderNotAvailable() {
@@ -793,7 +823,7 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 
 
 		certificatejTabbedPane.setSelectedIndex(0);
-		selectFirstAliasOfKeyStore(ksIndex);
+		activateFirstOnlyAliasOfKeyStore(ksIndex);
 
 		fileTextField.setText("");
 		pkcs12PasswordField.setText("");
@@ -802,20 +832,11 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 
 	private void browseButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_browseButtonActionPerformed
 		JFileChooser fc = new JFileChooser();
-		fc.setFileFilter( new FileFilter()
-		{
-			@Override
-			public String getDescription()
-			{
-				return Constant.messages.getString("options.cert.label.client.cert") + " (*.p12, *.pfx)";
-			}
-			@Override
-			public boolean accept(File f) {
-				return f.isDirectory() ||
-				f.getName().toLowerCase().endsWith( ".p12" ) || 
-				f.getName().toLowerCase().endsWith( ".pfx" );
-			}
-		} );
+		fc.setFileFilter(
+				new FileNameExtensionFilter(
+						Constant.messages.getString("options.cert.label.client.cert") + " (*.p12, *.pfx)",
+						"p12",
+						"pfx"));
 
 		int state = fc.showOpenDialog( null );
 
@@ -849,6 +870,10 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 	}
 	
 	private void setActiveButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_setActiveButtonActionPerformed
+		setActiveAction();
+	}//GEN-LAST:event_setActiveButtonActionPerformed
+	
+	private void setActiveAction() {
 		int ks = keyStoreList.getSelectedIndex();
 		int alias = aliasTable.getSelectedRow();
 		if (ks > -1 && alias>-1) {
@@ -887,10 +912,7 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 			}
 			certificateTextField.setText(contextManager.getDefaultKey());
 		}
-
-
-
-	}//GEN-LAST:event_setActiveButtonActionPerformed
+	}
 
 	public String getPassword() {
 		JPasswordField askPasswordField = new JPasswordField();
@@ -976,10 +998,27 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 	public void initParam(Object obj) {
 		OptionsParam options = (OptionsParam) obj;
 		OptionsParamCertificate certParam = options.getCertificateParam();
+		
+		// Should only run once after startup if client certificate is set from commandline
+		if(overrideEnableClientCertificate) {
+			certParam.setEnableCertificate(true);
+			overrideEnableClientCertificate = false;
+		}
+		keyStoreListModel.clear();
+		for (int i = 0; i < contextManager.getKeyStoreCount(); i++) {
+			keyStoreListModel.addElement(contextManager.getKeyStoreDescription(i));
+		}
+		Certificate cert = contextManager.getDefaultCertificate();
+		if (cert != null) {
+			certificateTextField.setText(cert.toString());
+		}
 		useClientCertificateCheckBox.setSelected(certParam.isUseClientCert());
+		useClientCertificateCheckBoxActionPerformed(null);
+		
 		//getBtnLocation().setEnabled(getChkUseClientCertificate().isSelected());
 		//getTxtLocation().setText(options.getCertificateParam().getClientCertLocation());
 		enableUnsafeSSLRenegotiationCheckBox.setSelected(certParam.isAllowUnsafeSslRenegotiation());
+
 	}
 
 	@Override
@@ -989,12 +1028,6 @@ public class OptionsCertificatePanel extends AbstractParamPanel implements Obser
 		certParam.setEnableCertificate(useClientCertificateCheckBox.isSelected());
 
 		certParam.setAllowUnsafeSslRenegotiation(enableUnsafeSSLRenegotiationCheckBox.isSelected());
-	}
-
-
-	@Override
-	public void update(Observable arg0, Object arg1) {
-		updateDriverComboBox();
 	}
 
 	@Override

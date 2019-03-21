@@ -31,6 +31,7 @@ import java.util.Map.Entry;
 
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.Constant;
+import org.parosproxy.paros.control.Control;
 import org.parosproxy.paros.control.Control.Mode;
 import org.parosproxy.paros.extension.ExtensionAdaptor;
 import org.parosproxy.paros.extension.ExtensionHook;
@@ -39,6 +40,7 @@ import org.parosproxy.paros.model.Session;
 import org.parosproxy.paros.model.SiteNode;
 import org.parosproxy.paros.network.HttpMessage;
 import org.parosproxy.paros.network.HttpSender;
+import org.zaproxy.zap.extension.search.ExtensionSearch;
 import org.zaproxy.zap.model.Context;
 import org.zaproxy.zap.network.HttpSenderListener;
 import org.zaproxy.zap.view.ScanPanel;
@@ -108,6 +110,7 @@ public class ExtensionHttpSessions extends ExtensionAdaptor implements SessionCh
 	private PopupMenuFactoryAddUserFromSession popupMenuAddUserFromSession;
 
 	private PopupMenuItemCopySessionToken popupMenuItemCopySessionToken;
+	private PopupMenuSessionSearch popupMenuItemFindRelatedMessages;
 
 	/**
 	 * Instantiates a new extension http sessions.
@@ -122,6 +125,11 @@ public class ExtensionHttpSessions extends ExtensionAdaptor implements SessionCh
 	 */
 	private void initialize() {
 		this.setOrder(68);
+	}
+
+	@Override
+	public boolean supportsDb(String type) {
+		return true;
 	}
 
 	@Override
@@ -177,6 +185,9 @@ public class ExtensionHttpSessions extends ExtensionAdaptor implements SessionCh
 			extensionHook.getHookMenu().addPopupMenuItem(getPopupMenuRemoveSession());
 			extensionHook.getHookMenu().addPopupMenuItem(getPopupMenuAddUserFromSession());
 			extensionHook.getHookMenu().addPopupMenuItem(getPopupMenuItemCopySessionToken());
+			if (Control.getSingleton().getExtensionLoader().getExtension(ExtensionSearch.class) != null) {
+				extensionHook.getHookMenu().addPopupMenuItem(getPopupMenuItemFindRelatedMessages());
+			}
 		}
 
 		// Register as an API implementor
@@ -251,6 +262,13 @@ public class ExtensionHttpSessions extends ExtensionAdaptor implements SessionCh
 			popupMenuItemCopySessionToken = new PopupMenuItemCopySessionToken(getHttpSessionsPanel());
 		}
 		return popupMenuItemCopySessionToken;
+	}
+
+	private PopupMenuSessionSearch getPopupMenuItemFindRelatedMessages() {
+		if (popupMenuItemFindRelatedMessages == null) {
+			popupMenuItemFindRelatedMessages = new PopupMenuSessionSearch(httpSessionsPanel);
+		}
+		return popupMenuItemFindRelatedMessages;
 	}
 
 	/**
@@ -644,10 +662,7 @@ public class ExtensionHttpSessions extends ExtensionAdaptor implements SessionCh
 
 	@Override
 	public void onHttpResponseReceive(HttpMessage msg, int initiator, HttpSender sender) {
-		if (initiator == HttpSender.ACTIVE_SCANNER_INITIATOR || initiator == HttpSender.SPIDER_INITIATOR
-				|| initiator == HttpSender.AJAX_SPIDER_INITIATOR || initiator == HttpSender.FORCED_BROWSE_INITIATOR
-				|| initiator == HttpSender.CHECK_FOR_UPDATES_INITIATOR || initiator == HttpSender.FUZZER_INITIATOR
-				|| initiator == HttpSender.AUTHENTICATION_INITIATOR) {
+		if (initiator != HttpSender.PROXY_INITIATOR && initiator != HttpSender.MANUAL_REQUEST_INITIATOR) {
 			// Not a session we care about
 			return;
 		}

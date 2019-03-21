@@ -20,9 +20,12 @@
 package org.zaproxy.zap.extension.ascan;
 
 import java.util.Date;
+import java.util.Locale;
+
 import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.core.scanner.HostProcess;
 import org.parosproxy.paros.core.scanner.Plugin;
+import org.parosproxy.paros.core.scanner.PluginStats;
 
 /**
  * Class for Visual Plugin Progress management
@@ -38,6 +41,7 @@ public class ScanProgressItem {
     private Plugin plugin;
     private int status;
     private ScanProgressActionIcon progressAction;
+    private final PluginStats pluginStats;
 
     /**
      *
@@ -47,6 +51,7 @@ public class ScanProgressItem {
     public ScanProgressItem(HostProcess hProcess, Plugin plugin, int status) {
         this.hProcess = hProcess;
         this.plugin = plugin;
+        this.pluginStats = hProcess.getPluginStats(plugin.getId());
         this.status = status;
         this.progressAction = new ScanProgressActionIcon(this);
     }
@@ -56,7 +61,7 @@ public class ScanProgressItem {
      * @return
      */
     public String getNameLabel() {
-        return plugin.getName();
+        return pluginStats.getPluginName();
     }
 
     /**
@@ -64,7 +69,7 @@ public class ScanProgressItem {
      * @return
      */
     public String getAttackStrenghtLabel() {
-        return Constant.messages.getString("ascan.policy.level." + plugin.getAttackStrength().name().toLowerCase());
+        return Constant.messages.getString("ascan.policy.level." + plugin.getAttackStrength().name().toLowerCase(Locale.ROOT));
     }
 
     /**
@@ -157,7 +162,7 @@ public class ScanProgressItem {
      * @see #getSkippedReason()
      */
     public boolean isSkipped() {
-        return hProcess.isSkipped(plugin);
+        return pluginStats.isSkipped();
     }
 
     /**
@@ -168,7 +173,7 @@ public class ScanProgressItem {
      * @see #isSkipped()
      */
     public String getSkippedReason() {
-        return hProcess.getSkippedReason(plugin);
+        return pluginStats.getSkippedReason();
     }
 
     public void skip() {
@@ -186,7 +191,7 @@ public class ScanProgressItem {
     }
 
 	public int getReqCount() {
-		return hProcess.getPluginRequestCount(plugin.getId());
+		return pluginStats.getMessageCount();
 	}
 
 	/**
@@ -195,7 +200,7 @@ public class ScanProgressItem {
 	 * @return the alert count.
 	 */
 	int getAlertCount() {
-		return hProcess.getPluginStats(plugin.getId()).getAlertCount();
+		return pluginStats.getAlertCount();
 	}
 
 	@Override

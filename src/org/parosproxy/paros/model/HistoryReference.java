@@ -54,6 +54,8 @@
 // ZAP: 2017/06/13 Notify when a note is set.
 // ZAP: 2017/07/04 Notify when a HistoryReference is deleted.
 // ZAP: 2017/08/18 Add TYPE_FUZZER_TEMPORARY.
+// ZAP: 2018/02/14 Remove unnecessary boxing / unboxing
+// ZAP: 2019/01/09 Add TYPE_CALLBACK.
 
 package org.parosproxy.paros.model;
 
@@ -261,6 +263,13 @@ public class HistoryReference {
      */
     public static final int TYPE_FUZZER_TEMPORARY = 20;
 
+    /**
+     * A HTTP message received by the callback handler.
+     *
+     * @since TODO add version
+     */
+    public static final int TYPE_CALLBACK = 21;
+
    private static java.text.DecimalFormat decimalFormat = new java.text.DecimalFormat("##0.###");
 	private static TableHistory staticTableHistory = null;
 	// ZAP: Support for multiple tags
@@ -270,14 +279,14 @@ public class HistoryReference {
 
 	static {
 		Set<Integer> defaultHistoryTypes = new HashSet<>();
-		defaultHistoryTypes.add(Integer.valueOf(HistoryReference.TYPE_TEMPORARY));
-		defaultHistoryTypes.add(Integer.valueOf(HistoryReference.TYPE_SCANNER_TEMPORARY));
-		defaultHistoryTypes.add(Integer.valueOf(HistoryReference.TYPE_AUTHENTICATION));
-		defaultHistoryTypes.add(Integer.valueOf(HistoryReference.TYPE_SPIDER_TASK));
-		defaultHistoryTypes.add(Integer.valueOf(HistoryReference.TYPE_SEQUENCE_TEMPORARY));
-		defaultHistoryTypes.add(Integer.valueOf(HistoryReference.TYPE_SPIDER_AJAX_TEMPORARY));
-		defaultHistoryTypes.add(Integer.valueOf(HistoryReference.TYPE_SPIDER_TEMPORARY));
-		defaultHistoryTypes.add(Integer.valueOf(HistoryReference.TYPE_FUZZER_TEMPORARY));
+		defaultHistoryTypes.add(HistoryReference.TYPE_TEMPORARY);
+		defaultHistoryTypes.add(HistoryReference.TYPE_SCANNER_TEMPORARY);
+		defaultHistoryTypes.add(HistoryReference.TYPE_AUTHENTICATION);
+		defaultHistoryTypes.add(HistoryReference.TYPE_SPIDER_TASK);
+		defaultHistoryTypes.add(HistoryReference.TYPE_SEQUENCE_TEMPORARY);
+		defaultHistoryTypes.add(HistoryReference.TYPE_SPIDER_AJAX_TEMPORARY);
+		defaultHistoryTypes.add(HistoryReference.TYPE_SPIDER_TEMPORARY);
+		defaultHistoryTypes.add(HistoryReference.TYPE_FUZZER_TEMPORARY);
 		DEFAULT_TEMPORARY_HISTORY_TYPES = Collections.unmodifiableSet(defaultHistoryTypes);
 
 		TEMPORARY_HISTORY_TYPES.addAll(DEFAULT_TEMPORARY_HISTORY_TYPES);
@@ -840,7 +849,7 @@ public class HistoryReference {
 	 */
 	public static void addTemporaryType(int type) {
 		synchronized (TEMPORARY_HISTORY_TYPES) {
-			TEMPORARY_HISTORY_TYPES.add(Integer.valueOf(type));
+			TEMPORARY_HISTORY_TYPES.add(type);
 		}
 	}
 
@@ -856,7 +865,7 @@ public class HistoryReference {
 	 * @see #getTemporaryTypes()
 	 */
 	public static void removeTemporaryType(int type) {
-		Integer typeInteger = Integer.valueOf(type);
+		Integer typeInteger = type;
 		if (DEFAULT_TEMPORARY_HISTORY_TYPES.contains(typeInteger)) {
 			return;
 		}

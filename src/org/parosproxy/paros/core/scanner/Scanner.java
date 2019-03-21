@@ -42,6 +42,8 @@
 // ZAP: 2016/07/01 Issue 2647 Support a/pscan rule configuration 
 // ZAP: 2016/11/14 Restore and deprecate old constructor, to keep binary compatibility
 // ZAP: 2017/06/29 Remove code duplication in scan()
+// ZAP: 2018/02/09 Check also its excluded URLs when scanning a context (Issue 4368).
+// ZAP: 2018/04/19 Added support for publishing events
 
 package org.parosproxy.paros.core.scanner;
 
@@ -67,9 +69,11 @@ import org.parosproxy.paros.model.Model;
 import org.parosproxy.paros.model.SiteNode;
 import org.parosproxy.paros.network.ConnectionParam;
 import org.parosproxy.paros.network.HttpMessage;
+import org.zaproxy.zap.extension.ascan.ActiveScanEventPublisher;
 import org.zaproxy.zap.extension.ascan.ScanPolicy;
 import org.zaproxy.zap.extension.ruleconfig.RuleConfigParam;
 import org.zaproxy.zap.extension.script.ScriptCollection;
+import org.zaproxy.zap.model.ScanEventPublisher;
 import org.zaproxy.zap.model.StructuralNode;
 import org.zaproxy.zap.model.StructuralSiteNode;
 import org.zaproxy.zap.model.Target;
@@ -158,13 +162,19 @@ public class Scanner implements Runnable {
         Thread thread = new Thread(this);
         thread.setPriority(Thread.NORM_PRIORITY-2);
         thread.start();
-    }
+        ActiveScanEventPublisher.publishScanEvent(
+                ScanEventPublisher.SCAN_STARTED_EVENT, this.getId(), target, this.user);
+   }
 
     public void stop() {
-        log.info("scanner stopped");
-
-        isStop = true;
-        
+        if (! isStop) {
+            log.info("scanner stopped");
+    
+            isStop = true;
+            
+            ActiveScanEventPublisher.publishScanEvent(
+                    ScanEventPublisher.SCAN_STOPPED_EVENT, this.getId());
+        }
     }
     
 	public void addScannerListener(ScannerListener listener) {
@@ -352,6 +362,9 @@ public class Scanner implements Runnable {
 		String diffTimeString = decimalFormat.format(diffTimeMillis/1000.0) + "s";
 	    log.info("scanner completed in " + diffTimeString);
 	    isStop = true;
+	    
+        ActiveScanEventPublisher.publishScanEvent(
+                ScanEventPublisher.SCAN_COMPLETED_EVENT, this.getId());
 
 	    for (int i=0; i<listenerList.size(); i++) {
 	        // ZAP: Removed unnecessary cast.
@@ -391,10 +404,14 @@ public class Scanner implements Runnable {
 	// ZAP: support pause and notify parent
 	public void pause() {
 		this.pause = true;
+        ActiveScanEventPublisher.publishScanEvent(
+                ScanEventPublisher.SCAN_PAUSED_EVENT, this.getId());
 	}
 	
 	public void resume () {
 		this.pause = false;
+        ActiveScanEventPublisher.publishScanEvent(
+                ScanEventPublisher.SCAN_RESUMED_EVENT, this.getId());
 	}
 	
 	public boolean isPaused() {
@@ -426,7 +443,7 @@ public class Scanner implements Runnable {
 			return false;
 		}
 		if (this.target.getContext() != null) {
-			if ( ! target.getContext().isIncluded(nodeName)) {
+			if ( ! target.getContext().isInContext(nodeName)) {
 				// Restricted to nodes in the given context, and this isnt
 				return false;
 			}

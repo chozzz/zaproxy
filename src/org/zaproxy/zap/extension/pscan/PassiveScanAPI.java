@@ -33,6 +33,7 @@ import org.zaproxy.zap.extension.api.ApiResponseElement;
 import org.zaproxy.zap.extension.api.ApiResponseList;
 import org.zaproxy.zap.extension.api.ApiResponseSet;
 import org.zaproxy.zap.extension.api.ApiView;
+import org.zaproxy.zap.utils.ApiUtils;
 
 public class PassiveScanAPI extends ApiImplementor {
 
@@ -43,6 +44,8 @@ public class PassiveScanAPI extends ApiImplementor {
 	private static final String VIEW_SCAN_ONLY_IN_SCOPE = "scanOnlyInScope";
 	private static final String VIEW_RECORDS_TO_SCAN = "recordsToScan";
 	private static final String VIEW_SCANNERS = "scanners";
+	private static final String VIEW_CURRENT_RULE = "currentRule";
+	private static final String VIEW_MAX_ALERTS_PER_RULE = "maxAlertsPerRule";
 
 	private static final String ACTION_SET_ENABLED = "setEnabled";
 	private static final String ACTION_SET_SCAN_ONLY_IN_SCOPE = "setScanOnlyInScope";
@@ -51,12 +54,14 @@ public class PassiveScanAPI extends ApiImplementor {
 	private static final String ACTION_ENABLE_SCANNERS = "enableScanners";
 	private static final String ACTION_DISABLE_SCANNERS = "disableScanners";
 	private static final String ACTION_SET_SCANNER_ALERT_THRESHOLD = "setScannerAlertThreshold";
+	private static final String ACTION_SET_MAX_ALERTS_PER_RULE = "setMaxAlertsPerRule";
 
 	private static final String PARAM_ENABLED = "enabled";
 	private static final String PARAM_ONLY_IN_SCOPE = "onlyInScope";
 	private static final String PARAM_IDS = "ids";
 	private static final String PARAM_ID = "id";
 	private static final String PARAM_ALERT_THRESHOLD = "alertThreshold";
+	private static final String PARAM_MAX_ALERTS = "maxAlerts";
 
 	private ExtensionPassiveScan extension;
 	
@@ -70,10 +75,13 @@ public class PassiveScanAPI extends ApiImplementor {
 		this.addApiAction(new ApiAction(ACTION_ENABLE_SCANNERS, new String[] {PARAM_IDS}));
 		this.addApiAction(new ApiAction(ACTION_DISABLE_SCANNERS, new String[] {PARAM_IDS}));
 		this.addApiAction(new ApiAction(ACTION_SET_SCANNER_ALERT_THRESHOLD, new String[] {PARAM_ID, PARAM_ALERT_THRESHOLD}));
+		this.addApiAction(new ApiAction(ACTION_SET_MAX_ALERTS_PER_RULE, new String[] { PARAM_MAX_ALERTS }));
 
 		this.addApiView(new ApiView(VIEW_SCAN_ONLY_IN_SCOPE));
 		this.addApiView(new ApiView(VIEW_RECORDS_TO_SCAN));
 		this.addApiView(new ApiView(VIEW_SCANNERS));
+		this.addApiView(new ApiView(VIEW_CURRENT_RULE));
+		this.addApiView(new ApiView(VIEW_MAX_ALERTS_PER_RULE));
 
 	}
 	
@@ -109,7 +117,7 @@ public class PassiveScanAPI extends ApiImplementor {
 			String paramId = params.getString(PARAM_ID);
 			int pluginId;
 			try {
-				pluginId = Integer.valueOf(paramId.trim()).intValue();
+				pluginId = Integer.valueOf(paramId.trim());
 			} catch (NumberFormatException e) {
 				throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, PARAM_ID);
 			}
@@ -119,6 +127,9 @@ public class PassiveScanAPI extends ApiImplementor {
 
 			Plugin.AlertThreshold alertThreshold = getAlertThresholdFromParamAlertThreshold(params);
 			extension.setPluginPassiveScannerAlertThreshold(pluginId, alertThreshold);
+			break;
+		case ACTION_SET_MAX_ALERTS_PER_RULE:
+			extension.getPassiveScanParam().setMaxAlertsPerRule(ApiUtils.getIntParam(params, PARAM_MAX_ALERTS));
 			break;
 		default:
 			throw new ApiException(ApiException.Type.BAD_ACTION);
@@ -132,7 +143,7 @@ public class PassiveScanAPI extends ApiImplementor {
 		if (ids.length > 0) {
 			for (String id : ids) {
 				try {
-					int pluginId = Integer.valueOf(id.trim()).intValue();
+					int pluginId = Integer.valueOf(id.trim());
 					if (pluginId > 0) {
 						extension.setPluginPassiveScannerEnabled(pluginId, enabled);
 					}
@@ -179,6 +190,22 @@ public class PassiveScanAPI extends ApiImplementor {
 			}
 			
 			result = resultList;
+			break;
+		case VIEW_CURRENT_RULE:
+			Map<String, String> map = new HashMap<>();
+			map.put("name", extension.getCurrentRuleName());
+			map.put("url", extension.getCurrentUrl());
+			long time = extension.getCurrentRuleStartTime();
+			if (time > 0) {
+				time = System.currentTimeMillis() - time;
+			}
+			map.put("time", String.valueOf(time));
+			result = new ApiResponseSet<String>(name, map);
+			break;
+		case VIEW_MAX_ALERTS_PER_RULE:
+			result = new ApiResponseElement(
+					VIEW_MAX_ALERTS_PER_RULE,
+					Integer.toString(extension.getPassiveScanParam().getMaxAlertsPerRule()));
 			break;
 		default:
 			throw new ApiException(ApiException.Type.BAD_VIEW);

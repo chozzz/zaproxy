@@ -25,6 +25,9 @@
 // ZAP: 2016/10/27 Explicitly show other panel when the selected panel is removed.
 // ZAP: 2017/06/23 Ensure panel with validation errors is visible.
 // ZAP: 2017/09/03 Cope with Java 9 change to TreeNode.children().
+// ZAP: 2018/01/08 Allow to expand the node of a param panel.
+// ZAP: 2018/03/26 Ensure node of selected panel is visible.
+// ZAP: 2018/04/12 Allow to check if a param panel is selected.
 
 package org.parosproxy.paros.view;
 
@@ -34,6 +37,7 @@ import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.Rectangle;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
@@ -500,7 +504,9 @@ public class AbstractParamContainerPanel extends JSplitPane {
         nameLastSelectedPanel = name;
         currentShownPanel = panel; 
 
-        getTreeParam().setSelectionPath(new TreePath(getTreeNodeFromPanelName(name).getPath()));
+        TreePath nodePath = new TreePath(getTreeNodeFromPanelName(name).getPath());
+        getTreeParam().setSelectionPath(nodePath);
+        ensureNodeVisible(nodePath);
 
         getPanelHeadline();
         getTxtHeadline().setText(name);
@@ -511,6 +517,22 @@ public class AbstractParamContainerPanel extends JSplitPane {
         card.show(getPanelParam(), name);
         // ZAP: Notify the new panel that it is now shown
         panel.onShow();
+    }
+
+    /**
+     * Ensures the node of the panel is visible in the view port.
+     * <p>
+     * The node is assumed to be already {@link JTree#isVisible(TreePath) visible in the tree}.
+     * 
+     * @param nodePath the path to the node of the panel.
+     */
+    private void ensureNodeVisible(TreePath nodePath) {
+        Rectangle bounds = getTreeParam().getPathBounds(nodePath);
+        if (!getTreeParam().getVisibleRect().contains(bounds)) {
+            // Just do vertical scrolling.
+            bounds.x = 0;
+            getTreeParam().scrollRectToVisible(bounds);
+        }
     }
 
     /**
@@ -575,6 +597,56 @@ public class AbstractParamContainerPanel extends JSplitPane {
 
     public void expandRoot() {
         getTreeParam().expandPath(new TreePath(getRootNode()));
+    }
+
+    /**
+     * Expands the node of the param panel with the given name.
+     *
+     * @param panelName the name of the panel whose node should be expanded, should not be {@code null}.
+     * @since TODO add version
+     */
+    public void expandParamPanelNode(String panelName) {
+        DefaultMutableTreeNode node = getTreeNodeFromPanelName(panelName);
+        if (node != null) {
+            getTreeParam().expandPath(new TreePath(node.getPath()));
+        }
+    }
+
+    /**
+     * Tells whether or not the given param panel is selected.
+     *
+     * @param panelName the name of the panel to check if it is selected, should not be {@code null}.
+     * @return {@code true} if the panel is selected, {@code false} otherwise.
+     * @since TODO add version
+     * @see #isParamPanelOrChildSelected(String)
+     */
+    public boolean isParamPanelSelected(String panelName) {
+        DefaultMutableTreeNode node = getTreeNodeFromPanelName(panelName);
+        if (node != null) {
+            return getTreeParam().isPathSelected(new TreePath(node.getPath()));
+        }
+        return false;
+    }
+
+    /**
+     * Tells whether or not the given param panel, or one of its child panels, is selected.
+     *
+     * @param panelName the name of the panel to check, should not be {@code null}.
+     * @return {@code true} if the panel or one of its child panels is selected, {@code false} otherwise.
+     * @since TODO add version
+     * @see #isParamPanelSelected(String)
+     */
+    public boolean isParamPanelOrChildSelected(String panelName) {
+        DefaultMutableTreeNode node = getTreeNodeFromPanelName(panelName);
+        if (node != null) {
+            TreePath panelPath = new TreePath(node.getPath());
+            if (getTreeParam().isPathSelected(panelPath)) {
+                return true;
+            }
+            TreePath selectedPath = getTreeParam().getSelectionPath();
+            return selectedPath != null && panelPath.equals(selectedPath.getParentPath());
+        }
+        return false;
     }
 
     public void showDialog(boolean showRoot) {

@@ -26,33 +26,43 @@ import org.junit.rules.TemporaryFolder;
 
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.Assert.*;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.attribute.PosixFileAttributes;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Set;
+import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import org.apache.commons.configuration.tree.xpath.XPathExpressionEngine;
+import org.zaproxy.zap.control.AddOn.BundleData;
+import org.zaproxy.zap.control.AddOn.HelpSetData;
+import org.zaproxy.zap.control.AddOn.ValidationResult;
+import org.zaproxy.zap.testutils.TestUtils;
 import org.zaproxy.zap.utils.ZapXmlConfiguration;
 
 
 /**
  * Unit test for {@link AddOn}.
  */
-public class AddOnUnitTest {
+public class AddOnUnitTest extends TestUtils {
 
 	@Rule
 	public TemporaryFolder tempDir = new TemporaryFolder();
 
 	private static final File ZAP_VERSIONS_XML = 
-			Paths.get("test/resources/org/zaproxy/zap/control", "ZapVersions-deps.xml").toFile();
+			getResourcePath("ZapVersions-deps.xml", AddOnUnitTest.class).toFile();
 
 	@Test
 	@SuppressWarnings("deprecation")
@@ -139,6 +149,92 @@ public class AddOnUnitTest {
 		// When
 		addOnA2.isUpdateTo(addOnA1);
 		// Then = Exception
+	}
+
+	@Test
+	public void shouldBeUpdateIfSameVersionWithHigherStatus() throws Exception {
+		// Given
+		String name = "addon.zap";
+		String version = "1.0.0";
+		AddOn addOn = new AddOn(createAddOnFile(name, "beta", version));
+		AddOn addOnHigherStatus = new AddOn(createAddOnFile(name, "release", version));
+		// When
+		boolean update = addOnHigherStatus.isUpdateTo(addOn);
+		// Then
+		assertThat(update, is(equalTo(true)));
+	}
+
+	@Test
+	public void shouldNotBeUpdateIfSameVersionWithLowerStatus() throws Exception {
+		// Given
+		String name = "addon.zap";
+		String version = "1.0.0";
+		AddOn addOn = new AddOn(createAddOnFile(name, "beta", version));
+		AddOn addOnHigherStatus = new AddOn(createAddOnFile(name, "release", version));
+		// When
+		boolean update = addOn.isUpdateTo(addOnHigherStatus);
+		// Then
+		assertThat(update, is(equalTo(false)));
+	}
+
+	@Test
+	public void shouldBeUpdateIfFileIsNewerWithSameStatusAndVersion() throws Exception {
+		// Given
+		String name = "addon.zap";
+		String status = "release";
+		String version = "1.0.0";
+		AddOn addOn = new AddOn(createAddOnFile(name, status, version));
+		AddOn newestAddOn = new AddOn(createAddOnFile(name, status, version));
+		newestAddOn.getFile().setLastModified(System.currentTimeMillis() + 1000);
+		// When
+		boolean update = newestAddOn.isUpdateTo(addOn);
+		// Then
+		assertThat(update, is(equalTo(true)));
+	}
+
+	@Test
+	public void shouldNotBeUpdateIfFileIsOlderWithSameStatusAndVersion() throws Exception {
+		// Given
+		String name = "addon.zap";
+		String status = "release";
+		String version = "1.0.0";
+		AddOn addOn = new AddOn(createAddOnFile(name, status, version));
+		AddOn newestAddOn = new AddOn(createAddOnFile(name, status, version));
+		newestAddOn.getFile().setLastModified(System.currentTimeMillis() + 1000);
+		// When
+		boolean update = addOn.isUpdateTo(newestAddOn);
+		// Then
+		assertThat(update, is(equalTo(false)));
+	}
+
+	@Test
+	public void shouldBeUpdateIfOtherAddOnDoesNotHaveFileWithSameStatusAndVersion() throws Exception {
+		// Given
+		String name = "addon.zap";
+		String status = "release";
+		String version = "1.0.0";
+		AddOn addOn = new AddOn(createAddOnFile(name, status, version));
+		AddOn addOnWithoutFile = new AddOn(createAddOnFile(name, status, version));
+		addOnWithoutFile.setFile(null);
+		// When
+		boolean update = addOn.isUpdateTo(addOnWithoutFile);
+		// Then
+		assertThat(update, is(equalTo(true)));
+	}
+
+	@Test
+	public void shouldNotBeUpdateIfCurrentAddOnDoesNotHaveFileWithSameStatusAndVersion() throws Exception {
+		// Given
+		String name = "addon.zap";
+		String status = "release";
+		String version = "1.0.0";
+		AddOn addOn = new AddOn(createAddOnFile(name, status, version));
+		AddOn addOnWithoutFile = new AddOn(createAddOnFile(name, status, version));
+		addOnWithoutFile.setFile(null);
+		// When
+		boolean update = addOnWithoutFile.isUpdateTo(addOn);
+		// Then
+		assertThat(update, is(equalTo(false)));
 	}
 	
 	@Test
@@ -285,6 +381,110 @@ public class AddOnUnitTest {
 		assertThat(addOnFile, is(equalTo(true)));
 	}
 
+	@Test
+	public void shouldNotBeValidAddOnIfPathIsNull() throws Exception {
+		// Given
+		Path file = null;
+		// When
+		ValidationResult result = AddOn.isValidAddOn(file);
+		// Then
+		assertThat(result.getValidity(), is(equalTo(ValidationResult.Validity.INVALID_PATH)));
+	}
+
+	@Test
+	public void shouldNotBeValidAddOnIfPathHasNoFileName() throws Exception {
+		// Given
+		Path file = Paths.get("/");
+		// When
+		ValidationResult result = AddOn.isValidAddOn(file);
+		// Then
+		assertThat(result.getValidity(), is(equalTo(ValidationResult.Validity.INVALID_PATH)));
+	}
+
+	@Test
+	public void shouldNotBeValidAddOnIfFileDoesNotHaveZapExtension() throws Exception {
+		// Given
+		Path file = tempDir.newFile("addon.zip").toPath();
+		// When
+		ValidationResult result = AddOn.isValidAddOn(file);
+		// Then
+		assertThat(result.getValidity(), is(equalTo(ValidationResult.Validity.INVALID_FILE_NAME)));
+	}
+
+	@Test
+	public void shouldNotBeValidAddOnIfPathIsDirectory() throws Exception {
+		// Given
+		Path file = tempDir.newFolder("addon.zap").toPath();
+		// When
+		ValidationResult result = AddOn.isValidAddOn(file);
+		// Then
+		assertThat(result.getValidity(), is(equalTo(ValidationResult.Validity.FILE_NOT_READABLE)));
+	}
+
+	@Test
+	public void shouldNotBeValidAddOnIfPathIsNotReadable() throws Exception {
+		// Given
+		Path file = createAddOnFile("addon.zap", "alpha", "1");
+		Set<PosixFilePermission> perms = Files.readAttributes(file, PosixFileAttributes.class).permissions();
+		perms.remove(PosixFilePermission.OWNER_READ);
+		Files.setPosixFilePermissions(file, perms);
+		// When
+		ValidationResult result = AddOn.isValidAddOn(file);
+		// Then
+		assertThat(result.getValidity(), is(equalTo(ValidationResult.Validity.FILE_NOT_READABLE)));
+	}
+
+	@Test
+	public void shouldNotBeValidAddOnIfNotZipFile() throws Exception {
+		// Given
+		Path file = tempDir.newFile("addon.zap").toPath();
+		// When
+		ValidationResult result = AddOn.isValidAddOn(file);
+		// Then
+		assertThat(result.getValidity(), is(equalTo(ValidationResult.Validity.UNREADABLE_ZIP_FILE)));
+		assertThat(result.getException(), is(notNullValue()));
+	}
+
+	@Test
+	public void shouldNotBeValidAddOnIfItHasNoManifest() throws Exception {
+		// Given
+		Path file = tempDir.newFile("addon.zap").toPath();
+		try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(file.toFile()))) {
+			zos.putNextEntry(new ZipEntry("Not a manifest"));
+			zos.closeEntry();
+		}
+		// When
+		ValidationResult result = AddOn.isValidAddOn(file);
+		// Then
+		assertThat(result.getValidity(), is(equalTo(ValidationResult.Validity.MISSING_MANIFEST)));
+	}
+
+	@Test
+	public void shouldNotBeValidAddOnIfManifestIsMalformed() throws Exception {
+		// Given
+		Path file = tempDir.newFile("addon.zap").toPath();
+		try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(file.toFile()))) {
+			zos.putNextEntry(new ZipEntry(AddOn.MANIFEST_FILE_NAME));
+			zos.closeEntry();
+		}
+		// When
+		ValidationResult result = AddOn.isValidAddOn(file);
+		// Then
+		assertThat(result.getValidity(), is(equalTo(ValidationResult.Validity.INVALID_MANIFEST)));
+		assertThat(result.getException(), is(notNullValue()));
+	}
+
+	@Test
+	public void shouldBeValidAddOnIfValid() throws Exception {
+		// Given
+		Path file = createAddOnFile("addon.zap", "release", "1.0.0");
+		// When
+		ValidationResult result = AddOn.isValidAddOn(file);
+		// Then
+		assertThat(result.getValidity(), is(equalTo(ValidationResult.Validity.VALID)));
+		assertThat(result.getManifest(), is(notNullValue()));
+	}
+
 	@Test(expected = IOException.class)
 	public void shouldFailToCreateAddOnFromNullFile() throws Exception {
 		// Given
@@ -349,6 +549,98 @@ public class AddOnUnitTest {
 		String normalisedFileName = addOn.getNormalisedFileName();
 		// Then
 		assertThat(normalisedFileName, is(equalTo("addon-2.8.1.zap")));
+	}
+
+	@Test
+	public void shouldHaveEmptyBundleByDefault() throws Exception {
+		// Given
+		Path file = createAddOnFile("addon.zap", "release", "1.0.0");
+		AddOn addOn = new AddOn(file);
+		// When
+		BundleData bundleData = addOn.getBundleData();
+		// Then
+		assertThat(bundleData, is(notNullValue()));
+		assertThat(bundleData.isEmpty(), is(equalTo(true)));
+		assertThat(bundleData.getBaseName(), is(equalTo("")));
+		assertThat(bundleData.getPrefix(), is(equalTo("")));
+	}
+
+	@Test
+	public void shouldHaveDeclaredBundle() throws Exception {
+		// Given
+		Path file = createAddOnFile("addon.zap", "release", "1.0.0", manifest -> {
+			manifest.append("<bundle>").append("org.zaproxy.Messages").append("</bundle>");
+		});
+		AddOn addOn = new AddOn(file);
+		// When
+		BundleData bundleData = addOn.getBundleData();
+		// Then
+		assertThat(bundleData, is(notNullValue()));
+		assertThat(bundleData.isEmpty(), is(equalTo(false)));
+		assertThat(bundleData.getBaseName(), is(equalTo("org.zaproxy.Messages")));
+		assertThat(bundleData.getPrefix(), is(equalTo("")));
+	}
+
+	@Test
+	public void shouldHaveDeclaredBundleWithPrefix() throws Exception {
+		// Given
+		Path file = createAddOnFile("addon.zap", "release", "1.0.0", manifest -> {
+			manifest.append("<bundle prefix=\"msgs\">").append("org.zaproxy.Messages").append("</bundle>");
+		});
+		AddOn addOn = new AddOn(file);
+		// When
+		BundleData bundleData = addOn.getBundleData();
+		// Then
+		assertThat(bundleData, is(notNullValue()));
+		assertThat(bundleData.isEmpty(), is(equalTo(false)));
+		assertThat(bundleData.getBaseName(), is(equalTo("org.zaproxy.Messages")));
+		assertThat(bundleData.getPrefix(), is(equalTo("msgs")));
+	}
+
+	@Test
+	public void shouldHaveEmptyHelpSetByDefault() throws Exception {
+		// Given
+		Path file = createAddOnFile("addon.zap", "release", "1.0.0");
+		AddOn addOn = new AddOn(file);
+		// When
+		HelpSetData helpSetData = addOn.getHelpSetData();
+		// Then
+		assertThat(helpSetData, is(notNullValue()));
+		assertThat(helpSetData.isEmpty(), is(equalTo(true)));
+		assertThat(helpSetData.getBaseName(), is(equalTo("")));
+		assertThat(helpSetData.getLocaleToken(), is(equalTo("")));
+	}
+
+	@Test
+	public void shouldHaveDeclaredHelpSet() throws Exception {
+		// Given
+		Path file = createAddOnFile("addon.zap", "release", "1.0.0", manifest -> {
+			manifest.append("<helpset>").append("org.zaproxy.help.helpset").append("</helpset>");
+		});
+		AddOn addOn = new AddOn(file);
+		// When
+		HelpSetData helpSetData = addOn.getHelpSetData();
+		// Then
+		assertThat(helpSetData, is(notNullValue()));
+		assertThat(helpSetData.isEmpty(), is(equalTo(false)));
+		assertThat(helpSetData.getBaseName(), is(equalTo("org.zaproxy.help.helpset")));
+		assertThat(helpSetData.getLocaleToken(), is(equalTo("")));
+	}
+
+	@Test
+	public void shouldHaveDeclaredHelpSetWithLocaleToken() throws Exception {
+		// Given
+		Path file = createAddOnFile("addon.zap", "release", "1.0.0", manifest -> {
+			manifest.append("<helpset localetoken=\"%LC%\">").append("org.zaproxy.help%LC%.helpset").append("</helpset>");
+		});
+		AddOn addOn = new AddOn(file);
+		// When
+		HelpSetData helpSetData = addOn.getHelpSetData();
+		// Then
+		assertThat(helpSetData, is(notNullValue()));
+		assertThat(helpSetData.isEmpty(), is(equalTo(false)));
+		assertThat(helpSetData.getBaseName(), is(equalTo("org.zaproxy.help%LC%.helpset")));
+		assertThat(helpSetData.getLocaleToken(), is(equalTo("%LC%")));
 	}
 	
 	@Test
@@ -551,12 +843,20 @@ public class AddOnUnitTest {
 	}
 
 	private Path createAddOnFile(String fileName, String status, String version) {
-		return createAddOnFile(fileName, status, version, null);
+		return createAddOnFile(fileName, status, version, (String) null);
 	}
 
 	private Path createAddOnFile(String fileName, String status, String version, String javaVersion) {
+		return createAddOnFile(fileName, status, version, javaVersion, null) ;
+	}
+
+	private Path createAddOnFile(String fileName, String status, String version, Consumer<StringBuilder> manifestConsumer) {
+		return createAddOnFile(fileName, status, version, null, manifestConsumer) ;
+	}
+
+	private Path createAddOnFile(String fileName, String status, String version, String javaVersion, Consumer<StringBuilder> manifestConsumer) {
 		try {
-			File file = tempDir.newFile(fileName);
+			File file = new File(tempDir.newFolder(), fileName);
 			try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(file))) {
 				ZipEntry manifest = new ZipEntry(AddOn.MANIFEST_FILE_NAME);
 				zos.putNextEntry(manifest);
@@ -568,6 +868,9 @@ public class AddOnUnitTest {
 					strBuilder.append("<dependencies>");
 					strBuilder.append("<javaversion>").append(javaVersion).append("</javaversion>");
 					strBuilder.append("</dependencies>");
+				}
+				if (manifestConsumer != null) {
+					manifestConsumer.accept(strBuilder);
 				}
 				strBuilder.append("</zapaddon>");
 				byte[] bytes = strBuilder.toString().getBytes(StandardCharsets.UTF_8);

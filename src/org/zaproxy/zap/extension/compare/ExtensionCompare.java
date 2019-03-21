@@ -21,8 +21,12 @@ package org.zaproxy.zap.extension.compare;
 
 import java.awt.EventQueue;
 import java.io.File;
+import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -32,6 +36,8 @@ import java.util.TreeSet;
 import javax.swing.JFileChooser;
 import javax.swing.JMenuItem;
 import javax.swing.filechooser.FileFilter;
+import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.xml.transform.stream.StreamSource;
 
 import org.apache.commons.httpclient.URI;
 import org.apache.log4j.Logger;
@@ -285,9 +291,25 @@ public class ExtensionCompare extends ExtensionAdaptor implements SessionChanged
 					    sb.append("</report>");	
 					    sb.append(CRLF);
 					    
-				        ReportGenerator.stringToHtml(sb.toString(), 
-					    		Constant.getZapInstall() + File.separator + "xml" + File.separator + "reportCompare.xsl", 
-					    		outputFile.getAbsolutePath());
+                        String fileName = "reportCompare.xsl";
+                        Path xslFile = Paths.get(Constant.getZapInstall(), "xml", fileName);
+                        if (Files.exists(xslFile)) {
+                            ReportGenerator.stringToHtml(sb.toString(), xslFile.toString(), outputFile.getAbsolutePath());
+                        } else {
+                            String path = "/org/zaproxy/zap/resources/xml/" + fileName;
+                            try (InputStream is = ExtensionCompare.class.getResourceAsStream(path)) {
+                                if (is == null) {
+                                    log.error("Bundled file not found: " + path);
+                                    return;
+                                }
+                                ReportGenerator.stringToHtml(sb.toString(), new StreamSource(is), outputFile.getAbsolutePath());
+                            }
+                        }
+
+						if (Files.notExists(outputFile.toPath())) {
+							log.info("Not opening report, does not exist: " + outputFile);
+							return;
+						}
 
 			    		try {
 							DesktopUtils.openUrlInBrowser(outputFile.toURI());
@@ -313,25 +335,7 @@ public class ExtensionCompare extends ExtensionAdaptor implements SessionChanged
     private File getOutputFile() {
 
 	    JFileChooser chooser = new JFileChooser(getModel().getOptionsParam().getUserDirectory());
-	    chooser.setFileFilter(new FileFilter() {
-	           @Override
-	           public boolean accept(File file) {
-	                if (file.isDirectory()) {
-	                    return true;
-	                } else if (file.isFile() && 
-	                		file.getName().toLowerCase().endsWith(".htm")) {
-	                    return true;
-	                } else if (file.isFile() && 
-	                		file.getName().toLowerCase().endsWith(".html")) {
-	                    return true;
-	                }
-	                return false;
-	            }
-	           @Override
-	           public String getDescription() {
-	               return Constant.messages.getString("file.format.html");
-	           }
-	    });
+	    chooser.setFileFilter(new FileNameExtensionFilter(Constant.messages.getString("file.format.html"), "htm", "html"));
 	    
 		File file = null;
 	    int rc = chooser.showSaveDialog(getView().getMainFrame());

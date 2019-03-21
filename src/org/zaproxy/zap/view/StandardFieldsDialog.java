@@ -34,6 +34,7 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,13 +50,17 @@ import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
+import javax.swing.JTextField;
 import javax.swing.KeyStroke;
 import javax.swing.border.EmptyBorder;
 import javax.swing.filechooser.FileFilter;
+import javax.swing.text.JTextComponent;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.extension.AbstractDialog;
@@ -64,6 +69,7 @@ import org.parosproxy.paros.view.View;
 import org.zaproxy.zap.extension.help.ExtensionHelp;
 import org.zaproxy.zap.model.Context;
 import org.zaproxy.zap.model.Target;
+import org.zaproxy.zap.utils.ZapLabel;
 import org.zaproxy.zap.utils.ZapNumberSpinner;
 import org.zaproxy.zap.utils.ZapTextArea;
 import org.zaproxy.zap.utils.ZapTextField;
@@ -82,6 +88,16 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	private static final long serialVersionUID = 1L;
 	private static final EmptyBorder FULL_BORDER = new EmptyBorder(8, 8, 8, 8);
 	private static final EmptyBorder TOP_BOTTOM_BORDER = new EmptyBorder(8, 0, 8, 0);
+
+	/**
+	 * The main pop up menu, to be shared by the fields.
+	 * <p>
+	 * Lazily initialised.
+	 * 
+	 * @see #getMainPopupMenu()
+	 * @see #setFieldMainPopupMenu(String)
+	 */
+	private static JPopupMenu mainPopupMenu;
 
 	private JPanel mainPanel = null;
 	private List<JPanel> tabPanels = null;
@@ -192,9 +208,11 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	 */
 	public StandardFieldsDialog(Window owner, String titleLabel, Dimension dim, String[] tabLabels, boolean modal) {
 		super(owner, modal);
+		if (modal) {
+			setModalityType(ModalityType.DOCUMENT_MODAL);
+		}
 		this.setDefaultCloseOperation(javax.swing.WindowConstants.DO_NOTHING_ON_CLOSE);
 		this.setTitle(Constant.messages.getString(titleLabel));
-		this.setXWeights(0.4D, 0.6D);	// Looks a bit better..
 		this.initialize(dim, tabLabels);
 		this.hideOnSave = true;
 	}
@@ -480,27 +498,46 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 	
 	public void addPadding() {
+		validateNotTabbed();
+		this.addPadding(this.getMainPanel(), this.fieldList.size());
+	}
+
+	/**
+	 * Validates that the dialogue is not tabbed.
+	 *
+	 * @throws IllegalArgumentException if the dialogue was initialised with tabs.
+	 * @see #validateTabbed(int)
+	 */
+	private void validateNotTabbed() {
 		if (isTabbed()) {
 			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
 		}
-		this.addPadding(this.getMainPanel(), this.fieldList.size());
 	}
 	
 	private void incTabOffset(int tabIndex) {
-		int next = this.tabOffsets.get(tabIndex)+1;
-		this.tabOffsets.remove(tabIndex);
-		this.tabOffsets.add(tabIndex, next);
+		this.tabOffsets.set(tabIndex, tabOffsets.get(tabIndex) + 1);
 	}
 
 	public void addPadding(int tabIndex) {
+		validateTabbed(tabIndex);
+		this.addPadding(this.tabPanels.get(tabIndex), this.tabOffsets.get(tabIndex));
+		incTabOffset(tabIndex);
+	}
+
+	/**
+	 * Validates that the dialogue is tabbed and the given tab index is valid.
+	 *
+	 * @param tabIndex the index of the tab to validate.
+	 * @throws IllegalArgumentException if the dialogue was not initialised with tabs or if no tab exists with the given index.
+	 * @see #validateNotTabbed()
+	 */
+	private void validateTabbed(int tabIndex) {
 		if (!isTabbed()) {
 			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
 		}
 		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
 			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
 		}
-		this.addPadding(this.tabPanels.get(tabIndex), this.tabOffsets.get(tabIndex));
-		incTabOffset(tabIndex);
 	}
 
 	private void addField(JPanel panel, int indexy, String fieldLabel, Component field, Component wrapper, double weighty) {
@@ -524,37 +561,89 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 
 	private void addField(String fieldLabel, Component field, Component wrapper, double weighty) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		this.addField(this.getMainPanel(), this.fieldList.size(), fieldLabel, field, wrapper, weighty);
 	}
 
 	public void addTextField(String fieldLabel, String value) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
-		ZapTextField field = new ZapTextField();
-		if (value != null) {
-			field.setText(value);
-		}
+		addTextComponent(new ZapTextField(), fieldLabel, value);
+	}
+
+	private void addTextComponent(JTextComponent field, String fieldLabel, String value) {
+		validateNotTabbed();
+		setTextAndDiscardEdits(field, value);
 		this.addField(fieldLabel, field, field, 0.0D);
 	}
 
 	public void addTextField(int tabIndex, String fieldLabel, String value) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
-		ZapTextField field = new ZapTextField();
-		if (value != null) {
-			field.setText(value);
-		}
+		addTextComponent(tabIndex, new ZapTextField(), fieldLabel, value);
+	}
+
+	private void addTextComponent(int tabIndex, JTextComponent field, String fieldLabel, String value) {
+		validateTabbed(tabIndex);
+		setTextAndDiscardEdits(field, value);
 
 		this.addField(this.tabPanels.get(tabIndex), this.tabOffsets.get(tabIndex), fieldLabel, field, field, 0.0D);
 		incTabOffset(tabIndex);
+	}
+
+	/**
+	 * Sets the given value to the given field.
+	 * <p>
+	 * The edits are discarded after setting the value, if the field is a {@link ZapTextField} or {@link ZapTextArea}.
+	 *
+	 * @param field the field to set the value.
+	 * @param value the value to set.
+	 */
+	private static void setTextAndDiscardEdits(JTextComponent field, String value) {
+		if (value == null) {
+			return;
+		}
+
+		field.setText(value);
+		if (field instanceof ZapTextField) {
+			((ZapTextField) field).discardAllEdits();
+		} else if (field instanceof ZapTextArea) {
+			((ZapTextArea) field).discardAllEdits();
+		}
+	}
+
+	/**
+	 * Adds a {@link ZapLabel} field, with the given label and, optionally, the given value.
+	 *
+	 * @param fieldLabel the name of the label of the read-only text field.
+	 * @param value the value of the field, might be {@code null}.
+	 * @throws IllegalArgumentException if any of the following conditions is true:
+	 *             <ul>
+	 *             <li>the dialogue has tabs;</li>
+	 *             <li>a field with the given label already exists.</li>
+	 *             </ul>
+	 * @since TODO add version
+	 * @see #addTextFieldReadOnly(int, String, String)
+	 * @see #addTextField(String, String)
+	 */
+	public void addTextFieldReadOnly(String fieldLabel, String value) {
+		addTextComponent(new ZapLabel(), fieldLabel, value);
+	}
+
+	/**
+	 * Adds a {@link ZapLabel} field, with the given label and, optionally, the given value, to the tab with the given index.
+	 *
+	 * @param tabIndex the index of the tab where the read-only text field should be added.
+	 * @param fieldLabel the name of the label of the read-only text field.
+	 * @param value the value of the field, might be {@code null}.
+	 * @since TODO add version
+	 * @throws IllegalArgumentException if any of the following conditions is true:
+	 *             <ul>
+	 *             <li>the dialogue does not have tabs;</li>
+	 *             <li>the dialogue has tabs but the given tab index is not valid;</li>
+	 *             <li>a field with the given label already exists.</li>
+	 *             </ul>
+	 * @see #addTextFieldReadOnly(String, String)
+	 * @see #addTextField(int, String, String)
+	 */
+	public void addTextFieldReadOnly(int tabIndex, String fieldLabel, String value) {
+		addTextComponent(tabIndex, new ZapLabel(), fieldLabel, value);
 	}
 
 	/**
@@ -568,14 +657,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	 * @see #getPasswordValue(String)
 	 */
 	public void addPasswordField(String fieldLabel, String value) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
-		JPasswordField field = new JPasswordField();
-		if (value != null) {
-			field.setText(value);
-		}
-		this.addField(fieldLabel, field, field, 0.0D);
+		addTextComponent(new JPasswordField(), fieldLabel, value);
 	}
 
 	/**
@@ -592,51 +674,28 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	 * @see #getPasswordValue(String)
 	 */
 	public void addPasswordField(int tabIndex, String fieldLabel, String value) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
-		JPasswordField field = new JPasswordField();
-		if (value != null) {
-			field.setText(value);
-		}
-
-		this.addField(this.tabPanels.get(tabIndex), this.tabOffsets.get(tabIndex), fieldLabel, field, field, 0.0D);
-		incTabOffset(tabIndex);
+		addTextComponent(tabIndex, new JPasswordField(), fieldLabel, value);
 	}
 
 	public void addMultilineField(String fieldLabel, String value) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		ZapTextArea field = new ZapTextArea();
 		field.setLineWrap(true);
 		JScrollPane scrollPane = new JScrollPane();
 		scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
 		scrollPane.setViewportView(field);
-		if (value != null) {
-			field.setText(value);
-		}
+		setTextAndDiscardEdits(field, value);
 		this.addField(fieldLabel, field, scrollPane, 1.0D);
 	}
 
 	public void addMultilineField(int tabIndex, String fieldLabel, String value) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		ZapTextArea field = new ZapTextArea();
 		field.setLineWrap(true);
 		JScrollPane scrollPane = new JScrollPane();
 		scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
 		scrollPane.setViewportView(field);
-		if (value != null) {
-			field.setText(value);
-		}
+		setTextAndDiscardEdits(field, value);
 		this.addField(this.tabPanels.get(tabIndex), this.tabOffsets.get(tabIndex), fieldLabel, field, scrollPane, 1.0D);
 		this.incTabOffset(tabIndex);
 	}
@@ -646,9 +705,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 
 	public void addComboField(String fieldLabel, String[] choices, String value, boolean editable) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		JComboBox<String> field = new JComboBox<>();
 		field.setEditable(editable);
 		for (String label : choices) {
@@ -665,9 +722,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 	
 	public void addComboField(String fieldLabel, List<String> choices, String value, boolean editable) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		JComboBox<String> field = new JComboBox<>();
 		field.setEditable(editable);
 		for (String label : choices) {
@@ -684,12 +739,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 
 	public void addComboField(int tabIndex, String fieldLabel, String[] choices, String value, boolean editable) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		JComboBox<String> field = new JComboBox<>();
 		field.setEditable(editable);
 		for (String label : choices) {
@@ -707,12 +757,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 	
 	public void addComboField(int tabIndex, String fieldLabel, List<String> choices, String value, boolean editable) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		JComboBox<String> field = new JComboBox<>();
 		field.setEditable(editable);
 		for (String label : choices) {
@@ -726,9 +771,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 
 	public void addComboField(String fieldLabel, int[] choices, int value) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		JComboBox<Integer> field = new JComboBox<>();
 		for (int label : choices) {
 			field.addItem(label);
@@ -785,12 +828,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	 * @see #setComboBoxModel(String, ComboBoxModel)
 	 */
 	public <E> void addComboField(int tabIndex, String fieldLabel, ComboBoxModel<E> comboBoxModel, boolean editable) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		JComboBox<E> field = new JComboBox<>(comboBoxModel);
 		field.setEditable(editable);
 		this.addField(this.tabPanels.get(tabIndex), this.tabOffsets.get(tabIndex), fieldLabel, field, field, 0.0D);
@@ -839,9 +877,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	 * @see #setComboBoxModel(String, ComboBoxModel)
 	 */
 	public <E> void addComboField(String fieldLabel, ComboBoxModel<E> comboBoxModel, boolean editable) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		JComboBox<E> field = new JComboBox<>(comboBoxModel);
 		field.setEditable(editable);
 		this.addField(fieldLabel, field, field, 0.0D);
@@ -862,15 +898,13 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	 * @param buttons if not null then the buttons will be added to the right of the table
 	 */
 	public void addTableField(String fieldLabel, JTable field, List<JButton> buttons) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		JScrollPane scrollPane = new JScrollPane();
 		scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
 		scrollPane.setViewportView(field);
 		field.setFillsViewportHeight(true);
 		
-		// Tables are a special case - they dont have labels and are accessed via the model
+		// Tables are a special case - they don't have labels and are accessed via the model
 		if (this.fieldList.contains(field)) {
 			throw new IllegalArgumentException("Field already added: " + field);
 		}
@@ -920,18 +954,13 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 
 	public void addTableField(int tabIndex, JTable field, List<JButton> buttons) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		JScrollPane scrollPane = new JScrollPane();
 		scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
 		scrollPane.setViewportView(field);
 		field.setFillsViewportHeight(true);
 		
-		// Tables are a special case - they dont have labels and are accessed via the model
+		// Tables are a special case - they don't have labels and are accessed via the model
 		if (this.fieldList.contains(field)) {
 			throw new IllegalArgumentException("Field already added: " + field);
 		}
@@ -981,9 +1010,15 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 			// Ignore - could be during init
 			logger.debug("No field for " + fieldLabel);
 		} else {
-			logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+			handleUnexpectedFieldClass(fieldLabel, c);
 		}
 	}
+
+    private static void handleUnexpectedFieldClass(String fieldLabel, Component component) {
+        logger.error(
+                "Unexpected field class " + fieldLabel + ": " + component.getClass().getCanonicalName() + "\n\t"
+                        + StringUtils.join(Thread.currentThread().getStackTrace(), "\n\t"));
+    }
 	
 	public void setComboFields(String fieldLabel, List<String> choices, String value) {
 		Component c = this.fieldMap.get(fieldLabel);
@@ -1001,7 +1036,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 			// Ignore - could be during init
 			logger.debug("No field for " + fieldLabel);
 		} else {
-			logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+			handleUnexpectedFieldClass(fieldLabel, c);
 		}
 	}
 
@@ -1027,46 +1062,32 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 			// Ignore - could be during init
 			logger.debug("No field for " + fieldLabel);
 		} else {
-			logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+			handleUnexpectedFieldClass(fieldLabel, c);
 		}
 	}
 	
 	public void addNumberField(String fieldLabel, Integer min, Integer max, int value) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		ZapNumberSpinner field = new ZapNumberSpinner(min, value, max);
 		this.addField(fieldLabel, field, field, 0.0D);
 	}
 	
 	public void addNumberField(int tabIndex, String fieldLabel, Integer min, Integer max, int value) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		ZapNumberSpinner field = new ZapNumberSpinner(min, value, max);
 		this.addField(this.tabPanels.get(tabIndex), this.tabOffsets.get(tabIndex), fieldLabel, field, field, 0.0D);
 		this.incTabOffset(tabIndex);
 	}
 	
 	public void addCheckBoxField(String fieldLabel, boolean value) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		JCheckBox field = new JCheckBox();
 		field.setSelected(value);
 		this.addField(fieldLabel, field, field, 0.0D);
 	}
 
 	public void addCheckBoxField(int tabIndex, String fieldLabel, boolean value) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		JCheckBox field = new JCheckBox();
 		field.setSelected(value);
 		this.addField(this.tabPanels.get(tabIndex), this.tabOffsets.get(tabIndex), fieldLabel, field, field, 0.0D);
@@ -1079,9 +1100,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	 */
 	public void addNodeSelectField(final String fieldLabel, final SiteNode value, 
 			final boolean editable, final boolean allowRoot) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		final ZapTextField text = new ZapTextField();
 		text.setEditable(editable);
 		if (value != null) {
@@ -1119,12 +1138,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	 */
 	public void addNodeSelectField(int tabIndex, final String fieldLabel, final SiteNode value, 
 			final boolean editable, final boolean allowRoot) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		final ZapTextField text = new ZapTextField();
 		text.setEditable(editable);
 		if (value != null) {
@@ -1156,18 +1170,53 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 		this.incTabOffset(tabIndex);
 	}
 	
+	/**
+	 * Add a 'node select' field to a non tabbed dialog. This includes 
+	 * a button for showing a Node Select Dialog and a 
+	 * field for showing the selected node.
+	 * @param fieldLabel the {@code I18N} key for the field label, should not be null
+	 * @param value the selected {@code Target} to show, can be null
+	 * @param editable whether the field showing selected {@code Target} is editable or not
+	 * @param allowRoot whether to allow root {@code SiteNode} to be selected as {@code Target} value or not
+	 * @since TODO add version
+	 * @see #addTargetSelectField(int, String, Target, boolean, boolean)
+	 */
+	public void addTargetSelectField(final String fieldLabel, final Target value,
+			final boolean editable, final boolean allowRoot) {
+		validateNotTabbed();
+		final ZapTextField text = new ZapTextField();
+		text.setEditable(editable);
+		this.setTextTarget(text, value);
+
+		JButton selectButton = new JButton(Constant.messages.getString("all.button.select"));
+		selectButton.setIcon(new ImageIcon(View.class.getResource("/resource/icon/16/094.png"))); // Globe icon
+		selectButton.addActionListener(new java.awt.event.ActionListener() { 
+			// Keep a local copy so that we can always select the last node chosen
+			Target target = value;
+			@Override
+			public void actionPerformed(java.awt.event.ActionEvent e) {
+				NodeSelectDialog nsd = new NodeSelectDialog(StandardFieldsDialog.this);
+				nsd.setAllowRoot(allowRoot);
+				target = nsd.showDialog(target);
+				setTextTarget(text, target);
+				targetSelected(fieldLabel, target);
+			}
+		});
+		JPanel panel = new JPanel();
+		panel.setLayout(new GridBagLayout());
+		panel.add(text, LayoutHelper.getGBC(0, 0, 1, 1.0D, 0.0D, GridBagConstraints.BOTH, new Insets(4,4,4,4)));
+		panel.add(selectButton, LayoutHelper.getGBC(1, 0, 1, 0.0D, 0.0D, GridBagConstraints.BOTH, new Insets(4,4,4,4)));
+		
+		this.addField(fieldLabel, text, panel, 0.0D);
+	}
+	
 	/*
 	 * Add a 'node select' field which provides a button for showing a Node Select Dialog and a 
 	 * non editable field for showing the node selected
 	 */
 	public void addTargetSelectField(int tabIndex, final String fieldLabel, final Target value,
 			final boolean editable, final boolean allowRoot) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		final ZapTextField text = new ZapTextField();
 		text.setEditable(editable);
 		this.setTextTarget(text, value);
@@ -1237,7 +1286,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 		if (node != null && node.getHistoryReference() != null) {
 			String url = node.getHistoryReference().getURI().toString();
 			if (node.isLeaf() && url.endsWith("/")) {
-				// String off the slash so we dont match a non leaf
+				// String off the slash so we don't match a non leaf
 				// node with the same name
 				url = url.substring(0, url.length()-1);
 			} else if (! node.isLeaf() && ! url.endsWith("/")) {
@@ -1250,9 +1299,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 
 	public void addContextSelectField(String fieldLabel, Context selectedContext){
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		ContextSelectComboBox field = new ContextSelectComboBox();
 		if (selectedContext != null) {
 			field.setSelectedItem(selectedContext);
@@ -1261,12 +1308,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 	
 	public void addContextSelectField(int tabIndex, String fieldLabel, Context selectedContext){
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		ContextSelectComboBox field = new ContextSelectComboBox();
 		if (selectedContext != null) {
 			field.setSelectedItem(selectedContext);
@@ -1277,9 +1319,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 	
 	public void addFileSelectField(String fieldLabel, final File dir, final int mode, final FileFilter filter) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		final ZapTextField text = new ZapTextField();
 		text.setEditable(false);
 		if (dir != null) {
@@ -1315,12 +1355,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 	
 	public void addFileSelectField(int tabIndex, final String fieldLabel, final File dir, final int mode, final FileFilter filter) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		final ZapTextField text = new ZapTextField();
 		text.setEditable(false);
 		if (dir != null) {
@@ -1356,6 +1391,88 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 		this.incTabOffset(tabIndex);
 	}
 
+	/**
+	 * Add a custom {@code Component} to a tabbed {@code StandardFieldsDialog} without any label.
+	 * 
+	 * @param tabIndex the index of the tab to which the {@code Component} need to be added
+	 * @param component the {@code Component} to be added
+	 * @since TODO add version
+	 * @see #addCustomComponent(Component)
+	 * @see #addCustomComponent(String, Component)
+	 * @see #addCustomComponent(int, String, Component)
+	 */
+	public void addCustomComponent(int tabIndex, Component component) {
+		validateTabbed(tabIndex);
+		if (this.fieldList.contains(component)) {
+			throw new IllegalArgumentException("Component already added: " + component);
+		}
+		this.tabPanels.get(tabIndex).add(component, 
+				LayoutHelper.getGBC(0, this.tabOffsets.get(tabIndex), 2, fieldWeight, 0.0D, GridBagConstraints.BOTH, new Insets(4,4,4,4)));
+		
+		if (this.fieldList.size() == 0) {
+			// First field, always grab focus
+			component.requestFocusInWindow();
+		}
+		this.fieldList.add(component);
+		this.incTabOffset(tabIndex);
+	}
+	
+	/**
+	 * Add a custom {@code Component} to a {@code StandardFieldsDialog} without any label.
+	 * 
+	 * @param component the {@code Component} to be added
+	 * @since TODO add version
+	 * @see #addCustomComponent(int, Component)
+	 * @see #addCustomComponent(String, Component)
+	 * @see #addCustomComponent(int, String, Component)
+	 */
+	public void addCustomComponent(Component component) {
+		validateNotTabbed();
+		if (this.fieldList.contains(component)) {
+			throw new IllegalArgumentException("Component already added: " + component);
+		}
+		this.getMainPanel().add(component, 
+				LayoutHelper.getGBC(0, this.fieldList.size(), 2, fieldWeight, 0.0D, GridBagConstraints.BOTH, new Insets(4,4,4,4)));
+		if (this.fieldList.size() == 0) {
+			// First field, always grab focus
+			component.requestFocusInWindow();
+		}
+		this.fieldList.add(component);
+	}
+	
+	/**
+	 * Add a custom {@code Component} to a tabbed {@code StandardFieldsDialog} with the given label.
+	 * 
+	 * @param tabIndex tabIndex the index of the tab to which the {@code Component} need to be added
+	 * @param componentLabel the {@code I18N} key for the component label, should not be null
+	 * @param component the {@code Component} to be added
+	 * @since TODO add version
+	 * @see #addCustomComponent(Component)
+	 * @see #addCustomComponent(int, Component)
+	 * @see #addCustomComponent(String, Component)
+	 */
+	public void addCustomComponent(int tabIndex, String componentLabel, Component component) {
+		validateTabbed(tabIndex);
+		this.addField(this.tabPanels.get(tabIndex), this.tabOffsets.get(tabIndex), componentLabel, component, component, 0.0D);
+		this.incTabOffset(tabIndex);
+	}
+	
+	
+	/**
+	 * Add a custom {@code Component} to {@code StandardFieldsDialog} with the given label.
+	 * 
+	 * @param componentLabel the {@code I18N} key for the component label, should not be null
+	 * @param component the {@code Component} to be added
+	 * @since TODO add version
+	 * @see #addCustomComponent(Component)
+	 * @see #addCustomComponent(int, Component)
+	 * @see #addCustomComponent(int, String, Component)
+	 */
+	public void addCustomComponent(String componentLabel, Component component) {
+		validateNotTabbed();
+		this.addField(componentLabel, component, component, 0.0D);
+	}
+	
 	/**
 	 * Notifies that a site node was selected.
 	 * <p>
@@ -1394,14 +1511,12 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	public String getStringValue(String fieldLabel) {
 		Component c = this.fieldMap.get(fieldLabel);
 		if (c != null) {
-			if (c instanceof ZapTextField) {
-				return ((ZapTextField)c).getText();
-			} else if (c instanceof ZapTextArea) {
-				return ((ZapTextArea)c).getText();
+			if (c instanceof JTextComponent) {
+				return ((JTextComponent) c).getText();
 			} else if (c instanceof JComboBox) {
 				return (String)((JComboBox<?>)c).getSelectedItem();
 			} else {
-				logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+				handleUnexpectedFieldClass(fieldLabel, c);
 			}
 		}
 		return null;
@@ -1434,7 +1549,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 			if (c instanceof ContextSelectComboBox) {
 				return ((ContextSelectComboBox)c).getSelectedContext();
 			} else {
-				logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+				handleUnexpectedFieldClass(fieldLabel, c);
 			}
 		}
 		return null;
@@ -1457,7 +1572,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 			if (c instanceof ContextSelectComboBox) {
 				((ContextSelectComboBox) c).setSelectedItem(context);
 			} else {
-				logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+				handleUnexpectedFieldClass(fieldLabel, c);
 			}
 		}
 	}
@@ -1465,18 +1580,14 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	public void setFieldValue(String fieldLabel, String value) {
 		Component c = this.fieldMap.get(fieldLabel);
 		if (c != null) {
-			if (c instanceof ZapTextField) {
-				((ZapTextField)c).setText(value);
-			} else if (c instanceof JPasswordField) {
-				((JPasswordField)c).setText(value);
-			} else if (c instanceof ZapTextArea) {
-				((ZapTextArea)c).setText(value);
+			if (c instanceof JTextComponent) {
+				((JTextComponent) c).setText(value);
 			} else if (c instanceof JComboBox) {
 				((JComboBox<?>)c).setSelectedItem(value);
 			} else if (c instanceof JLabel) {
 				((JLabel)c).setText(value);
 			} else {
-				logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+				handleUnexpectedFieldClass(fieldLabel, c);
 			}
 		}
 	}
@@ -1487,7 +1598,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 			if (c instanceof JCheckBox) {
 				((JCheckBox)c).setSelected(value);
 			} else {
-				logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+				handleUnexpectedFieldClass(fieldLabel, c);
 			}
 		}
 	}
@@ -1496,12 +1607,8 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 		Component c = this.fieldMap.get(fieldLabel);
 		if (c != null) {
 			Object value = null;
-			if (c instanceof ZapTextField) {
-				value = ((ZapTextField)c).getText();
-			} else if (c instanceof JPasswordField) {
-				return ((JPasswordField) c).getDocument().getLength() == 0;
-			} else if (c instanceof ZapTextArea) {
-				value = ((ZapTextArea)c).getText();
+			if (c instanceof JTextComponent) {
+				return ((JTextComponent) c).getDocument().getLength() == 0;
 			} else if (c instanceof JComboBox) {
 				value = ((JComboBox<?>)c).getSelectedItem();
 			} else if (c instanceof ZapNumberSpinner) {
@@ -1510,7 +1617,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 					value = null;
 				}
 			} else {
-				logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+				handleUnexpectedFieldClass(fieldLabel, c);
 			}
 			return value == null || value.toString().length() == 0;
 			
@@ -1526,7 +1633,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 			} else if (c instanceof JComboBox) {
 				return (Integer)((JComboBox<?>)c).getSelectedItem();
 			} else {
-				logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+				handleUnexpectedFieldClass(fieldLabel, c);
 			}
 		}
 		return -1;
@@ -1540,15 +1647,13 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 			} else if (c instanceof JComboBox) {
 				((JComboBox<?>)c).setSelectedItem(value);
 			} else {
-				logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+				handleUnexpectedFieldClass(fieldLabel, c);
 			}
 		}
 	}
 	
 	public void addReadOnlyField(String fieldLabel, String value, boolean doubleWidth) {
-		if (isTabbed()) {
-			throw new IllegalArgumentException("Initialised as a tabbed dialog - must use method with tab parameters");
-		}
+		validateNotTabbed();
 		JLabel field = new JLabel();
 		if (value != null) {
 			field.setText(value);
@@ -1564,12 +1669,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 
 	public void addReadOnlyField(int tabIndex, String fieldLabel, String value, boolean doubleWidth) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		JLabel field = new JLabel();
 		if (value != null) {
 			field.setText(value);
@@ -1590,6 +1690,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 
 	public void setCustomTabPanel(int i, JComponent panel) {
+		validateTabbed(i);
 		this.tabPanels.get(i).add(panel, LayoutHelper.getGBC(0, 0, 1, 1.0D, 1.0D, GridBagConstraints.BOTH));
 	}
 
@@ -1600,7 +1701,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 			if (c instanceof JCheckBox) {
 				return ((JCheckBox)c).isSelected();
 			} else {
-				logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+				handleUnexpectedFieldClass(fieldLabel, c);
 			}
 		}
 		return null;
@@ -1609,35 +1710,73 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	public void addFieldListener(String fieldLabel, ActionListener listener) {
 		Component c = this.fieldMap.get(fieldLabel);
 		if (c != null) {
-			if (c instanceof ZapTextField) {
-				((ZapTextField)c).addActionListener(listener);
-			} else if (c instanceof JPasswordField) {
-				((JPasswordField)c).addActionListener(listener);
+			if (c instanceof JTextField) {
+				((JTextField) c).addActionListener(listener);
 			} else if (c instanceof JComboBox) {
 				((JComboBox<?>)c).addActionListener(listener);
 			} else if (c instanceof JCheckBox) {
 				((JCheckBox)c).addActionListener(listener);
 			} else {
-				logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+				handleUnexpectedFieldClass(fieldLabel, c);
 			}
 		}
 	}
 
 	public void addFieldListener(String fieldLabel, MouseAdapter listener) {
+		this.fieldMap.computeIfPresent(fieldLabel, (k, c) -> {
+			c.addMouseListener(listener);
+			return c;
+		});
+	}
+
+	/**
+	 * Sets the given pop up menu to the field with the given label.
+	 * <p>
+	 * The pop up menu is only set to {@link JComponent} fields.
+	 *
+	 * @param fieldLabel the label of the field.
+	 * @param popup the pop up menu.
+	 * @since TODO add version
+	 * @see JComponent#setComponentPopupMenu(JPopupMenu)
+	 */
+	public void setFieldPopupMenu(String fieldLabel, JPopupMenu popup) {
 		Component c = this.fieldMap.get(fieldLabel);
 		if (c != null) {
-			if (c instanceof ZapTextField) {
-				((ZapTextField)c).addMouseListener(listener);
-			} else if (c instanceof ZapTextArea) {
-				((ZapTextArea)c).addMouseListener(listener);
-			} else if (c instanceof JPasswordField) {
-				((JPasswordField)c).addMouseListener(listener);
-			} else if (c instanceof JComboBox) {
-				((JComboBox<?>)c).addMouseListener(listener);
+			if (c instanceof JComponent) {
+				((JComponent) c).setComponentPopupMenu(popup);
 			} else {
-				logger.error("Unrecognised field class " + fieldLabel + ": " + c.getClass().getCanonicalName());
+				handleUnexpectedFieldClass(fieldLabel, c);
 			}
 		}
+	}
+
+	/**
+	 * Convenience method that sets the {@link org.parosproxy.paros.view.MainPopupMenu main pop up menu} to the field with the
+	 * given label.
+	 * <p>
+	 * The same pop up menu instance is shared between all components.
+	 *
+	 * @param fieldLabel the label of the field.
+	 * @since TODO add version
+	 * @see #setFieldPopupMenu(String, JPopupMenu)
+	 */
+	public void setFieldMainPopupMenu(String fieldLabel) {
+		setFieldPopupMenu(fieldLabel, getMainPopupMenu());
+	}
+
+	private static JPopupMenu getMainPopupMenu() {
+		if (mainPopupMenu == null) {
+			mainPopupMenu = new JPopupMenu() {
+
+				private static final long serialVersionUID = 1L;
+
+				@Override
+				public void show(Component invoker, int x, int y) {
+					View.getSingleton().getPopupMenu().show(invoker, x, y);
+				}
+			};
+		}
+		return mainPopupMenu;
 	}
 
 	public void removeAllFields() {
@@ -1645,6 +1784,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 			for (JPanel panel : this.tabPanels) {
 				panel.removeAll();
 			}
+			Collections.fill(tabOffsets, 0);
 		} else {
 			this.getMainPanel().removeAll();
 		}
@@ -1653,12 +1793,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	}
 
 	public void requestTabFocus(int tabIndex) {
-		if (!isTabbed()) {
-			throw new IllegalArgumentException("Not initialised as a tabbed dialog - must use method without tab parameters");
-		}
-		if (tabIndex < 0 || tabIndex >= this.tabPanels.size()) {
-			throw new IllegalArgumentException("Invalid tab index: " + tabIndex);
-		}
+		validateTabbed(tabIndex);
 		tabbedPane.setSelectedComponent(getTabComponent(this.tabPanels.get(tabIndex)));
 	}
 
@@ -1760,7 +1895,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	/**
 	 * Tells whether or not the given panel is scrollable.
 	 * <p>
-	 * <strong>Note:</strong> The scrollable state returned by this mehtod only applies to tabs that were set to be (or not)
+	 * <strong>Note:</strong> The scrollable state returned by this method only applies to tabs that were set to be (or not)
 	 * scrollable through the method {@link #setTabScrollable(String, boolean)}, not to "panels" added directly to a tab with
 	 * {@link #setCustomTabPanel(int, JComponent)}.
 	 *
@@ -1774,7 +1909,7 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
 	/**
 	 * Tells whether or not the tab with the given label is scrollable.
 	 * <p>
-	 * <strong>Note:</strong> The scrollable state returned by this mehtod only applies to tabs that were set to be (or not)
+	 * <strong>Note:</strong> The scrollable state returned by this method only applies to tabs that were set to be (or not)
 	 * scrollable through the method {@link #setTabScrollable(String, boolean)}, not to "panels" added directly to a tab with
 	 * {@link #setCustomTabPanel(int, JComponent)}.
 	 * 

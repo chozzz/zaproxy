@@ -19,13 +19,16 @@
  */
 package org.zaproxy.zap.extension.pscan;
 
-import javax.swing.GroupLayout;
+import java.awt.GridBagLayout;
+
 import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 
 import org.parosproxy.paros.model.OptionsParam;
 import org.parosproxy.paros.view.AbstractParamPanel;
 import org.zaproxy.zap.utils.I18N;
+import org.zaproxy.zap.utils.ZapNumberSpinner;
+import org.zaproxy.zap.view.LayoutHelper;
 
 /**
  * The GUI panel for options of the passive scanner.
@@ -42,27 +45,26 @@ class PassiveScannerOptionsPanel extends AbstractParamPanel {
     private static final long serialVersionUID = 1L;
 
     private final JCheckBox scanOnlyInScopeCheckBox;
+    private final JCheckBox scanFuzzerMessagesCheckBox;
+    private final ZapNumberSpinner maxAlertsPerRule;
 
     public PassiveScannerOptionsPanel(I18N messages) {
         setName(messages.getString("pscan.options.main.name"));
 
-        GroupLayout layout = new GroupLayout(this);
-        setLayout(layout);
+        scanOnlyInScopeCheckBox = new JCheckBox(messages.getString("pscan.options.main.label.scanOnlyInScope"));
+        scanFuzzerMessagesCheckBox = new JCheckBox(messages.getString("pscan.options.main.label.scanFuzzerMessages"));
+        maxAlertsPerRule = new ZapNumberSpinner();
 
-        layout.setAutoCreateGaps(true);
-        layout.setAutoCreateContainerGaps(true);
-
-        scanOnlyInScopeCheckBox = new JCheckBox();
-        JLabel scanOnlyInScopeLabel = new JLabel(messages.getString("pscan.options.main.label.scanOnlyInScope"));
-        scanOnlyInScopeLabel.setLabelFor(scanOnlyInScopeCheckBox);
-
-        layout.setHorizontalGroup(
-                layout.createSequentialGroup().addComponent(scanOnlyInScopeLabel).addComponent(scanOnlyInScopeCheckBox));
-
-        layout.setVerticalGroup(
-                layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
-                        .addComponent(scanOnlyInScopeLabel)
-                        .addComponent(scanOnlyInScopeCheckBox));
+        this.setLayout(new GridBagLayout());
+        
+        int y = 0;
+        this.add(scanOnlyInScopeCheckBox, LayoutHelper.getGBC(0, ++y, 2, 1.0));
+        this.add(scanFuzzerMessagesCheckBox, LayoutHelper.getGBC(0, ++y, 2, 1.0));
+        JLabel maxAlertsLabel = new JLabel(messages.getString("pscan.options.main.label.maxAlertsPerRule"));
+        maxAlertsLabel.setLabelFor(maxAlertsPerRule);
+        this.add(maxAlertsLabel, LayoutHelper.getGBC(0, ++y, 1, 1.0));
+        this.add(maxAlertsPerRule, LayoutHelper.getGBC(1, y, 1, 1.0));
+        this.add(new JLabel(""), LayoutHelper.getGBC(0, ++y, 2, 1.0, 1.0));
     }
 
     @Override
@@ -71,6 +73,8 @@ class PassiveScannerOptionsPanel extends AbstractParamPanel {
         PassiveScanParam pscanOptions = optionsParam.getParamSet(PassiveScanParam.class);
 
         scanOnlyInScopeCheckBox.setSelected(pscanOptions.isScanOnlyInScope());
+        scanFuzzerMessagesCheckBox.setSelected(pscanOptions.isScanFuzzerMessages());
+        maxAlertsPerRule.setValue(pscanOptions.getMaxAlertsPerRule());
     }
 
     @Override
@@ -79,6 +83,8 @@ class PassiveScannerOptionsPanel extends AbstractParamPanel {
         PassiveScanParam pscanOptions = optionsParam.getParamSet(PassiveScanParam.class);
 
         pscanOptions.setScanOnlyInScope(scanOnlyInScopeCheckBox.isSelected());
+        pscanOptions.setScanFuzzerMessages(scanFuzzerMessagesCheckBox.isSelected());
+        pscanOptions.setMaxAlertsPerRule(maxAlertsPerRule.getValue());
     }
 
     @Override

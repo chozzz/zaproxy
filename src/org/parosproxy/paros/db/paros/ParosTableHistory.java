@@ -37,6 +37,7 @@
 // ZAP: 2016/05/26 Delete temporary history types sequentially
 // ZAP: 2016/05/27 Change to use HistoryReference to obtain the temporary types
 // ZAP: 2016/08/30 Issue 2836: Change to delete temporary history types in batches to prevent out-of-memory-exception(s)
+// ZAP: 2018/02/14 Remove unnecessary boxing / unboxing
 
 package org.parosproxy.paros.db.paros;
 
@@ -194,12 +195,12 @@ public class ParosTableHistory extends ParosAbstractTable implements TableHistor
     private void updateTable(Connection connection) throws DatabaseException {
         try {
 			if (!DbUtils.hasColumn(connection, TABLE_NAME, TAG)) {
-			    DbUtils.executeAndClose(connection.prepareStatement("ALTER TABLE "+TABLE_NAME+" ADD COLUMN "+TAG+" VARCHAR(32768) DEFAULT ''"));
+			    DbUtils.execute(connection, "ALTER TABLE "+TABLE_NAME+" ADD COLUMN "+TAG+" VARCHAR(32768) DEFAULT ''");
 			}
 
 			// Add the NOTE column to the db if necessary
 			if (!DbUtils.hasColumn(connection, TABLE_NAME, NOTE)) {
-			    DbUtils.executeAndClose(connection.prepareStatement("ALTER TABLE "+TABLE_NAME+" ADD COLUMN "+NOTE+" VARCHAR(1048576) DEFAULT ''"));
+			    DbUtils.execute(connection, "ALTER TABLE "+TABLE_NAME+" ADD COLUMN "+NOTE+" VARCHAR(1048576) DEFAULT ''");
 			}
 			
 			if (DbUtils.getColumnType(connection, TABLE_NAME, REQBODY) != Types.SQL_VARBINARY) {
@@ -213,10 +214,10 @@ public class ParosTableHistory extends ParosAbstractTable implements TableHistor
 			}
 
 			if (!DbUtils.hasColumn(connection, TABLE_NAME, RESPONSE_FROM_TARGET_HOST)) {
-			    DbUtils.executeAndClose(connection.prepareStatement("ALTER TABLE " + TABLE_NAME + " ADD COLUMN "
-			            + RESPONSE_FROM_TARGET_HOST + " BOOLEAN DEFAULT FALSE"));
-			    DbUtils.executeUpdateAndClose(connection.prepareStatement("UPDATE " + TABLE_NAME + " SET " + RESPONSE_FROM_TARGET_HOST
-			            + " = TRUE "));
+			    DbUtils.execute(connection, "ALTER TABLE " + TABLE_NAME + " ADD COLUMN "
+			            + RESPONSE_FROM_TARGET_HOST + " BOOLEAN DEFAULT FALSE");
+			    DbUtils.executeUpdate(connection, "UPDATE " + TABLE_NAME + " SET " + RESPONSE_FROM_TARGET_HOST
+			            + " = TRUE ");
 			}
 			
 			int requestbodysizeindb = DbUtils.getColumnSize(connection, TABLE_NAME, REQBODY);
@@ -224,15 +225,15 @@ public class ParosTableHistory extends ParosAbstractTable implements TableHistor
 			try {	        
 			    if (requestbodysizeindb != this.configuredrequestbodysize && this.configuredrequestbodysize > 0) {
 			    	if (log.isDebugEnabled()) log.debug("Extending table "+ TABLE_NAME + " request body length from "+ requestbodysizeindb + " to " + this.configuredrequestbodysize);
-			    	DbUtils.executeAndClose(connection.prepareStatement("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN "
-			            + REQBODY + " VARBINARY("+this.configuredrequestbodysize+")"));
+			    	DbUtils.execute(connection, "ALTER TABLE " + TABLE_NAME + " ALTER COLUMN "
+			            + REQBODY + " VARBINARY("+this.configuredrequestbodysize+")");
 			    	if (log.isDebugEnabled()) log.debug("Completed extending table "+ TABLE_NAME + " request body length from "+ requestbodysizeindb + " to " + this.configuredrequestbodysize);
 			    }
 			    
 			    if (responsebodysizeindb != this.configuredresponsebodysize && this.configuredresponsebodysize > 0) {
 			    	if (log.isDebugEnabled()) log.debug("Extending table "+ TABLE_NAME + " response body length from "+ responsebodysizeindb + " to " + this.configuredresponsebodysize);
-			    	DbUtils.executeAndClose(connection.prepareStatement("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN "
-			            + RESBODY + " VARBINARY("+this.configuredresponsebodysize+")"));
+			    	DbUtils.execute(connection, "ALTER TABLE " + TABLE_NAME + " ALTER COLUMN "
+			            + RESBODY + " VARBINARY("+this.configuredresponsebodysize+")");
 			    	if (log.isDebugEnabled()) log.debug("Completed extending table "+ TABLE_NAME + " response body length from "+ responsebodysizeindb + " to " + this.configuredresponsebodysize);
 			    }
 			}
@@ -416,6 +417,11 @@ public class ParosTableHistory extends ParosAbstractTable implements TableHistor
         return getHistoryIdsOfHistType(sessionId, null);
     }
 
+	@Override
+	public List<Integer> getHistoryIdsStartingAt(long sessionId, int startAtHistoryId) throws DatabaseException {
+		return getHistoryIdsByParams(sessionId, startAtHistoryId, true, null);
+	}
+
     /**
      * Gets all the history record IDs of the given session and with the given history types.
      *
@@ -429,33 +435,56 @@ public class ParosTableHistory extends ParosAbstractTable implements TableHistor
      */
     @Override
     public List<Integer> getHistoryIdsOfHistType(long sessionId, int... histTypes) throws DatabaseException {
-        try {
+        return getHistoryIdsByParams(sessionId, 0, true, histTypes);
+    }
+
+	@Override
+	public List<Integer> getHistoryIdsOfHistTypeStartingAt(long sessionId, int startAtHistoryId, int... histTypes) throws DatabaseException {
+		return getHistoryIdsByParams(sessionId, startAtHistoryId, true, histTypes);
+	}
+
+	private List<Integer> getHistoryIdsByParams(long sessionId, int startAtHistoryId,  boolean includeHistTypes, int... histTypes) throws DatabaseException {
+		try {
 			boolean hasHistTypes = histTypes != null && histTypes.length > 0;
-			int strLength = hasHistTypes ? 97 : 68;
+			final int strLength = 121;
 			StringBuilder strBuilder = new StringBuilder(strLength);
 			strBuilder.append("SELECT ").append(HISTORYID);
 			strBuilder.append(" FROM ").append(TABLE_NAME).append(" WHERE ").append(SESSIONID).append(" = ?");
 			if (hasHistTypes) {
-			    strBuilder.append(" AND ").append(HISTTYPE).append(" IN ( UNNEST(?) )");
+				strBuilder.append(" AND ").append(HISTTYPE);
+				if (!includeHistTypes) {
+					strBuilder.append(" NOT");
+				}
+				strBuilder.append(" IN ( UNNEST(?) )");
 			}
+
+			if(startAtHistoryId > 0){
+				strBuilder.append(" AND ").append(HISTORYID).append(" >= ?");
+			}
+
 			strBuilder.append(" ORDER BY ").append(HISTORYID);
 
 			try (PreparedStatement psReadSession = getConnection().prepareStatement(strBuilder.toString())) {
 
-			    psReadSession.setLong(1, sessionId);
-			    if (hasHistTypes) {
-			        Array arrayHistTypes = getConnection().createArrayOf("INTEGER", ArrayUtils.toObject(histTypes));
-			        psReadSession.setArray(2, arrayHistTypes);
-			    }
-			    try (ResultSet rs = psReadSession.executeQuery()) {
-			        ArrayList<Integer> ids = new ArrayList<>();
-			        while (rs.next()) {
-			            ids.add(Integer.valueOf(rs.getInt(HISTORYID)));
-			        }
-			        ids.trimToSize();
+				psReadSession.setLong(1, sessionId);
+				int parameterIndex = 2;
+				if (hasHistTypes) {
+					Array arrayHistTypes = getConnection().createArrayOf("INTEGER", ArrayUtils.toObject(histTypes));
+					psReadSession.setArray(parameterIndex++, arrayHistTypes);
+				}
+				if(startAtHistoryId > 0) {
+					psReadSession.setInt(parameterIndex++, startAtHistoryId);
+				}
 
-			        return ids;
-			    }
+				try (ResultSet rs = psReadSession.executeQuery()) {
+					ArrayList<Integer> ids = new ArrayList<>();
+					while (rs.next()) {
+						ids.add(rs.getInt(HISTORYID));
+					}
+					ids.trimToSize();
+
+					return ids;
+				}
 			}
 		} catch (SQLException e) {
 			throw new DatabaseException(e);
@@ -474,38 +503,13 @@ public class ParosTableHistory extends ParosAbstractTable implements TableHistor
      */
     @Override
     public List<Integer> getHistoryIdsExceptOfHistType(long sessionId, int... histTypes) throws DatabaseException {
-        try {
-			boolean hasHistTypes = histTypes != null && histTypes.length > 0;
-			int strLength = hasHistTypes ? 102 : 68;
-			StringBuilder sb = new StringBuilder(strLength);
-			sb.append("SELECT ").append(HISTORYID);
-			sb.append(" FROM ").append(TABLE_NAME).append(" WHERE ").append(SESSIONID).append(" = ?");
-			if (hasHistTypes) {
-			    sb.append(" AND ").append(HISTTYPE).append(" NOT IN ( UNNEST(?) )");
-			}
-			sb.append(" ORDER BY ").append(HISTORYID);
-
-			try (PreparedStatement psReadSession = getConnection().prepareStatement(sb.toString())) {
-
-			    psReadSession.setLong(1, sessionId);
-			    if (hasHistTypes) {
-			        Array arrayHistTypes = getConnection().createArrayOf("INTEGER", ArrayUtils.toObject(histTypes));
-			        psReadSession.setArray(2, arrayHistTypes);
-			    }
-			    try (ResultSet rs = psReadSession.executeQuery()) {
-			        ArrayList<Integer> ids = new ArrayList<>();
-			        while (rs.next()) {
-			            ids.add(Integer.valueOf(rs.getInt(HISTORYID)));
-			        }
-			        ids.trimToSize();
-
-			        return ids;
-			    }
-			}
-		} catch (SQLException e) {
-			throw new DatabaseException(e);
-		}
+		return getHistoryIdsByParams(sessionId, 0, false, histTypes);
     }
+
+	@Override
+	public List<Integer> getHistoryIdsExceptOfHistTypeStartingAt(long sessionId, int startAtHistoryId, int... histTypes) throws DatabaseException {
+		return getHistoryIdsByParams(sessionId, startAtHistoryId, false, histTypes);
+	}
 
 	/**
 	 * @deprecated (2.3.0) Use {@link #getHistoryIdsOfHistType(long, int...)} instead. If the thread-safety provided by the
@@ -547,26 +551,26 @@ public class ParosTableHistory extends ParosAbstractTable implements TableHistor
 				        matcher = pattern.matcher(rs.getString(REQHEADER));
 				        if (matcher.find()) {
 				            // ZAP: Changed to use the method Integer.valueOf.
-				            v.add(Integer.valueOf(rs.getInt(HISTORYID)));
+				            v.add(rs.getInt(HISTORYID));
 				            continue;
 				        }
 				        matcher = pattern.matcher(rs.getString(REQBODY));
 				        if (matcher.find()) {
 				            // ZAP: Changed to use the method Integer.valueOf.
-				            v.add(Integer.valueOf(rs.getInt(HISTORYID)));
+				            v.add(rs.getInt(HISTORYID));
 				            continue;
 				        }
 				    } else {
 				        matcher = pattern.matcher(rs.getString(RESHEADER));
 				        if (matcher.find()) {
 				            // ZAP: Changed to use the method Integer.valueOf.
-				            v.add(Integer.valueOf(rs.getInt(HISTORYID)));
+				            v.add(rs.getInt(HISTORYID));
 				            continue;
 				        }
 				        matcher = pattern.matcher(rs.getString(RESBODY));
 				        if (matcher.find()) {
 				            // ZAP: Changed to use the method Integer.valueOf.
-				            v.add(Integer.valueOf(rs.getInt(HISTORYID)));
+				            v.add(rs.getInt(HISTORYID));
 				            continue;
 				        }
 				    }
@@ -664,7 +668,7 @@ public class ParosTableHistory extends ParosAbstractTable implements TableHistor
 
 			int count = 0;
 			for (Integer id : ids) {
-			    psDelete.setInt(1, id.intValue());
+			    psDelete.setInt(1, id);
 			    psDelete.addBatch();
 			    count++;
 

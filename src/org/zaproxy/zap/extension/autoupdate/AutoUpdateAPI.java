@@ -17,6 +17,9 @@
  */
 package org.zaproxy.zap.extension.autoupdate;
 
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -26,6 +29,7 @@ import net.sf.json.JSONObject;
 
 import org.apache.commons.lang.ObjectUtils;
 import org.apache.log4j.Logger;
+import org.parosproxy.paros.Constant;
 import org.zaproxy.zap.control.AddOn;
 import org.zaproxy.zap.extension.api.ApiAction;
 import org.zaproxy.zap.extension.api.ApiException;
@@ -44,14 +48,17 @@ public class AutoUpdateAPI extends ApiImplementor {
 	private static final String PREFIX = "autoupdate";
 	private static final String ACTION_DOWNLOAD_LATEST_RELEASE = "downloadLatestRelease";
 	private static final String ACTION_INSTALL_ADDON = "installAddon";
+	private static final String ACTION_INSTALL_LOCAL_ADDON = "installLocalAddon";
 	private static final String ACTION_UNINSTALL_ADDON = "uninstallAddon";
 	private static final String VIEW_LATEST_VERSION_NUMBER = "latestVersionNumber";
 	private static final String VIEW_IS_LATEST_VERSION = "isLatestVersion";
 	private static final String VIEW_INSTALLED_ADDONS = "installedAddons";
+	private static final String VIEW_LOCAL_ADDONS = "localAddons";
 	private static final String VIEW_NEW_ADDONS = "newAddons";
 	private static final String VIEW_UPDATED_ADDONS = "updatedAddons";
 	private static final String VIEW_MARKETPLACE_ADDONS = "marketplaceAddons";
 	private static final String PARAM_ID = "id";
+	private static final String PARAM_FILE = "file";
 	
 	private ExtensionAutoUpdate extension;
 	
@@ -59,10 +66,14 @@ public class AutoUpdateAPI extends ApiImplementor {
 		this.extension = extension;
 		this.addApiAction(new ApiAction(ACTION_DOWNLOAD_LATEST_RELEASE));
 		this.addApiAction(new ApiAction(ACTION_INSTALL_ADDON, new String[]{PARAM_ID}));
+		if (Constant.isDevMode()) {
+			this.addApiAction(new ApiAction(ACTION_INSTALL_LOCAL_ADDON, new String[] { PARAM_FILE }));
+		}
 		this.addApiAction(new ApiAction(ACTION_UNINSTALL_ADDON, new String[]{PARAM_ID}));
 		this.addApiView(new ApiView(VIEW_LATEST_VERSION_NUMBER));
 		this.addApiView(new ApiView(VIEW_IS_LATEST_VERSION));
 		this.addApiView(new ApiView(VIEW_INSTALLED_ADDONS));
+		this.addApiView(new ApiView(VIEW_LOCAL_ADDONS));
 		this.addApiView(new ApiView(VIEW_NEW_ADDONS));
 		this.addApiView(new ApiView(VIEW_UPDATED_ADDONS));
 		this.addApiView(new ApiView(VIEW_MARKETPLACE_ADDONS));
@@ -99,6 +110,10 @@ public class AutoUpdateAPI extends ApiImplementor {
 					throw new ApiException(ApiException.Type.INTERNAL_ERROR, errorMessages);
 				}
 			}
+		} else if (ACTION_INSTALL_LOCAL_ADDON.equals(name) && Constant.isDevMode()) {
+			return extension.installLocalAddOnQuietly(createPath(params.getString(PARAM_FILE)))
+					? ApiResponseElement.OK
+					: ApiResponseElement.FAIL;
 		} else if (ACTION_UNINSTALL_ADDON.equals(name)) {
 			String id = params.getString(PARAM_ID);
 			AddOn ao = extension.getLocalVersionInfo().getAddOn(id);
@@ -119,6 +134,14 @@ public class AutoUpdateAPI extends ApiImplementor {
 		}
 	}
 
+	private static Path createPath(String path) throws ApiException {
+		try {
+			return Paths.get(path);
+		} catch (InvalidPathException e) {
+			throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, PARAM_FILE, e);
+		}
+	}
+
 	@Override
 	public ApiResponse handleApiView(String name, JSONObject params)
 			throws ApiException {
@@ -128,36 +151,34 @@ public class AutoUpdateAPI extends ApiImplementor {
 		} else if (VIEW_IS_LATEST_VERSION.equals(name)) {
 			result = new ApiResponseElement(name, Boolean.toString(this.isLatestVersion()));
 		} else if (VIEW_INSTALLED_ADDONS.equals(name)) {
-			final ApiResponseList resultList = new ApiResponseList(name);
-			for (AddOn ao : extension.getInstalledAddOns()) {
-				resultList.addItem(addonToSet(ao));
-			}
-			result = resultList;
+			result = createResponseList(name, extension.getInstalledAddOns(), true);
+		} else if (VIEW_LOCAL_ADDONS.equals(name)) {
+			result = createResponseList(name, extension.getLocalAddOns(), true);
 		} else if (VIEW_NEW_ADDONS.equals(name)) {
-			final ApiResponseList resultList = new ApiResponseList(name);
-			for (AddOn ao : extension.getNewAddOns()) {
-				resultList.addItem(addonToSet(ao));
-			}
-			result = resultList;
+			result = createResponseList(name, extension.getNewAddOns());
 		} else if (VIEW_UPDATED_ADDONS.equals(name)) {
-			final ApiResponseList resultList = new ApiResponseList(name);
-			for (AddOn ao : extension.getUpdatedAddOns()) {
-				resultList.addItem(addonToSet(ao));
-			}
-			result = resultList;
+			result = createResponseList(name, extension.getUpdatedAddOns());
 		} else if (VIEW_MARKETPLACE_ADDONS.equals(name)) {
-			final ApiResponseList resultList = new ApiResponseList(name);
-			for (AddOn ao : extension.getMarketplaceAddOns()) {
-				resultList.addItem(addonToSet(ao));
-			}
-			result = resultList;
+			result = createResponseList(name, extension.getMarketplaceAddOns());
 		} else {
 			throw new ApiException(ApiException.Type.BAD_VIEW);
 		}
 		return result;
 	}
 	
-	private ApiResponseSet<String> addonToSet(AddOn ao) {
+	private static ApiResponseList createResponseList(String name, List<AddOn> addOns) {
+		return createResponseList(name, addOns, false);
+	}
+
+	private static ApiResponseList createResponseList(String name, List<AddOn> addOns, boolean localAddOns) {
+		ApiResponseList response = new ApiResponseList(name);
+		for (AddOn ao : addOns) {
+			response.addItem(addonToSet(ao, localAddOns));
+		}
+		return response;
+	}
+
+	private static ApiResponseSet<String> addonToSet(AddOn ao, boolean localAddOn) {
 		Map<String, String> map = new HashMap<>();
 		map.put("id", ao.getId());
 		map.put("name", ao.getName());
@@ -170,6 +191,10 @@ public class AutoUpdateAPI extends ApiImplementor {
 		map.put("status", ao.getStatus().toString());
 		map.put("url", ObjectUtils.toString(ao.getUrl()));
 		map.put("version", ObjectUtils.toString(ao.getVersion()));
+		map.put("installationStatus", ObjectUtils.toString(ao.getInstallationStatus()));
+		if (localAddOn) {
+			map.put("file", ao.getFile().toString());
+		}
 		return new ApiResponseSet<String>("addon", map);
 	}
 	

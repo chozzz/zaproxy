@@ -30,6 +30,9 @@
 // ZAP: 2014/02/21 Issue 1043: Custom active scan dialog
 // ZAP: 2014/12/10 Issue 1427: Standardize on [Cancel] [OK] button order
 // ZAP: 2016/11/17 Issue 2701 Added support for additional buttons to support Factory Reset
+// ZAP: 2018/01/08 Allow to expand the node of a param panel.
+// ZAP: 2018/04/12 Allow to check if a param panel is selected.
+// ZAP: 2019/03/19 Log the exception when validating/saving the AbstractParamPanels.
 
 package org.parosproxy.paros.view;
 
@@ -48,6 +51,7 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 
+import org.apache.log4j.Logger;
 import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.extension.AbstractDialog;
 import org.parosproxy.paros.model.Model;
@@ -56,6 +60,7 @@ import org.zaproxy.zap.view.LayoutHelper;
 public class AbstractParamDialog extends AbstractDialog {
 
     private static final long serialVersionUID = -5223178126156052670L;
+    private static final Logger LOGGER = Logger.getLogger(AbstractParamDialog.class);
     
     private int exitResult = JOptionPane.CANCEL_OPTION;
     
@@ -189,6 +194,9 @@ public class AbstractParamDialog extends AbstractDialog {
                         AbstractParamDialog.this.setVisible(false);
 
                     } catch (Exception ex) {
+                        if (LOGGER.isDebugEnabled()) {
+                            LOGGER.debug("Failed to validate or save the panels: ", ex);
+                        }
                         View.getSingleton().showWarningDialog(
                                 Constant.messages.getString("options.dialog.save.error", ex.getMessage()));
                     }
@@ -346,8 +354,48 @@ public class AbstractParamDialog extends AbstractDialog {
     	this.getJSplitPane().saveParam();
     }
 
+    /**
+     * Expands the root node.
+     *
+     * @see #expandParamPanelNode(String)
+     */
     protected void expandRoot() {
         this.getJSplitPane().expandRoot();
+    }
+
+    /**
+     * Expands the node of the param panel with the given name.
+     *
+     * @param panelName the name of the panel whose node should be expanded, should not be {@code null}.
+     * @since TODO add version
+     * @see #expandRoot()
+     */
+    protected void expandParamPanelNode(String panelName) {
+        getJSplitPane().expandParamPanelNode(panelName);
+    }
+
+    /**
+     * Tells whether or not the given param panel is selected.
+     *
+     * @param panelName the name of the panel to check if it is selected, should not be {@code null}.
+     * @return {@code true} if the panel is selected, {@code false} otherwise.
+     * @since TODO add version
+     * @see #isParamPanelOrChildSelected(String)
+     */
+    protected boolean isParamPanelSelected(String panelName) {
+        return getJSplitPane().isParamPanelSelected(panelName);
+    }
+
+    /**
+     * Tells whether or not the given param panel, or one of its child panels, is selected.
+     *
+     * @param panelName the name of the panel to check, should not be {@code null}.
+     * @return {@code true} if the panel or one of its child panels is selected, {@code false} otherwise.
+     * @since TODO add version
+     * @see #isParamPanelSelected(String)
+     */
+    protected boolean isParamPanelOrChildSelected(String panelName) {
+        return getJSplitPane().isParamPanelOrChildSelected(panelName);
     }
 
     public int showDialog(boolean showRoot) {

@@ -35,6 +35,14 @@ import org.zaproxy.zap.extension.api.ZapApiIgnore;
  */
 public class SpiderParam extends AbstractParam {
 
+	/**
+	 * The value that indicates that the crawl depth is unlimited.
+	 * 
+	 * @since TODO add version
+	 * @see #setMaxDepth(int)
+	 */
+	public static final int UNLIMITED_DEPTH = 0;
+
 	/** The Constant SPIDER_MAX_DEPTH. */
 	private static final String SPIDER_MAX_DEPTH = "spider.maxDepth";
 
@@ -158,7 +166,7 @@ public class SpiderParam extends AbstractParam {
 	 * Whether the forms are submitted, if their method is HTTP POST. This option should not be used if the
 	 * forms are not processed at all (processForm).
 	 */
-	private boolean postForm = false;
+	private boolean postForm = true;
 	/** The waiting time between new requests to server - safe from DDOS. */
 	private int requestWait = 200;
 	/** Which urls are skipped. */
@@ -245,10 +253,10 @@ public class SpiderParam extends AbstractParam {
 
 		this.showAdvancedDialog = getBoolean(SHOW_ADV_DIALOG, false);
 
-		this.processForm = getBoolean(SPIDER_PROCESS_FORM, false);
+		this.processForm = getBoolean(SPIDER_PROCESS_FORM, true);
 
 		try {
-			this.postForm = getConfig().getBoolean(SPIDER_POST_FORM, false);
+			this.postForm = getConfig().getBoolean(SPIDER_POST_FORM, true);
 		} catch (ConversionException e) {
 			// conversion issue from 1.4.1: convert the field from int to boolean
 			log.info("Warning while parsing config file: " + SPIDER_POST_FORM
@@ -331,21 +339,25 @@ public class SpiderParam extends AbstractParam {
     }
 
 	/**
-	 * Gets the max depth.
+	 * Gets the maximum depth the spider can crawl.
 	 * 
-	 * @return Returns the maxDepth.
+	 * @return the maximum depth, or {@value #UNLIMITED_DEPTH} if unlimited.
+	 * @see #setMaxDepth(int)
 	 */
 	public int getMaxDepth() {
 		return maxDepth;
 	}
 
 	/**
-	 * Sets the max depth.
+	 * Sets the maximum depth the spider can crawl.
+	 * <p>
+	 * Value {@value #UNLIMITED_DEPTH} for unlimited depth.
 	 * 
-	 * @param maxDepth The maxDepth to set.
+	 * @param maxDepth the new maximum depth.
+	 * @see #getMaxDepth()
 	 */
 	public void setMaxDepth(int maxDepth) {
-		this.maxDepth = maxDepth;
+		this.maxDepth = maxDepth > UNLIMITED_DEPTH ? maxDepth : UNLIMITED_DEPTH;
 		getConfig().setProperty(SPIDER_MAX_DEPTH, Integer.toString(this.maxDepth));
 
 	}
@@ -755,12 +767,8 @@ public class SpiderParam extends AbstractParam {
             DomainAlwaysInScopeMatcher excludedDomain = domainsAlwaysInScope.get(i);
 
             getConfig().setProperty(elementBaseKey + DOMAIN_ALWAYS_IN_SCOPE_VALUE_KEY, excludedDomain.getValue());
-            getConfig().setProperty(
-                    elementBaseKey + DOMAIN_ALWAYS_IN_SCOPE_REGEX_KEY,
-                    Boolean.valueOf(excludedDomain.isRegex()));
-            getConfig().setProperty(
-                    elementBaseKey + DOMAIN_ALWAYS_IN_SCOPE_ENABLED_KEY,
-                    Boolean.valueOf(excludedDomain.isEnabled()));
+            getConfig().setProperty(elementBaseKey + DOMAIN_ALWAYS_IN_SCOPE_REGEX_KEY, excludedDomain.isRegex());
+            getConfig().setProperty(elementBaseKey + DOMAIN_ALWAYS_IN_SCOPE_ENABLED_KEY, excludedDomain.isEnabled());
 
             if (excludedDomain.isEnabled()) {
                 enabledExcludedDomains.add(excludedDomain);
@@ -829,7 +837,7 @@ public class SpiderParam extends AbstractParam {
     @ZapApiIgnore
     public void setConfirmRemoveDomainAlwaysInScope(boolean confirmRemove) {
         this.confirmRemoveDomainAlwaysInScope = confirmRemove;
-        getConfig().setProperty(CONFIRM_REMOVE_DOMAIN_ALWAYS_IN_SCOPE, Boolean.valueOf(confirmRemoveDomainAlwaysInScope));
+        getConfig().setProperty(CONFIRM_REMOVE_DOMAIN_ALWAYS_IN_SCOPE, confirmRemoveDomainAlwaysInScope);
     }
 
 	public int getMaxScansInUI() {
@@ -872,7 +880,7 @@ public class SpiderParam extends AbstractParam {
 		}
 
 		this.sendRefererHeader = send;
-		getConfig().setProperty(SPIDER_SENDER_REFERER_HEADER, Boolean.valueOf(this.sendRefererHeader));
+		getConfig().setProperty(SPIDER_SENDER_REFERER_HEADER, this.sendRefererHeader);
 	}
 
 	/**
@@ -889,7 +897,7 @@ public class SpiderParam extends AbstractParam {
      */
     public void setMaxDuration(int maxDuration) {
         this.maxDuration = maxDuration;
-        getConfig().setProperty(MAX_DURATION, Integer.valueOf(maxDuration));
+        getConfig().setProperty(MAX_DURATION, maxDuration);
     }
 
     /**
@@ -910,7 +918,7 @@ public class SpiderParam extends AbstractParam {
      */
     public void setMaxChildren(int maxChildren) {
         this.maxChildren = maxChildren;
-        getConfig().setProperty(MAX_CHILDREN, Integer.valueOf(maxChildren));
+        getConfig().setProperty(MAX_CHILDREN, maxChildren);
     }
 
     /**

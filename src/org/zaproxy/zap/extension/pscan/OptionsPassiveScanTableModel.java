@@ -34,7 +34,6 @@ public class OptionsPassiveScanTableModel extends AbstractMultipleOptionsTableMo
 	private static final String[] COLUMN_NAMES = {
 		Constant.messages.getString("pscan.options.table.header.enabled"),
 		Constant.messages.getString("pscan.options.table.header.name"),
-		Constant.messages.getString("pscan.options.table.header.type"),
 		Constant.messages.getString("pscan.options.table.header.configuration")};
     
 	private static final int COLUMN_COUNT = COLUMN_NAMES.length;
@@ -90,12 +89,10 @@ public class OptionsPassiveScanTableModel extends AbstractMultipleOptionsTableMo
     public Object getValueAt(int rowIndex, int columnIndex) {
         switch (columnIndex) {
         case 0:
-            return Boolean.valueOf(getElement(rowIndex).isEnabled());
+            return getElement(rowIndex).isEnabled();
         case 1:
             return getElement(rowIndex).getName();
         case 2:
-            return getElement(rowIndex).getType().toString();
-        case 3:
             return getElement(rowIndex).getConf();
         }
         return null;
@@ -105,7 +102,7 @@ public class OptionsPassiveScanTableModel extends AbstractMultipleOptionsTableMo
     public void setValueAt(Object aValue, int rowIndex, int columnIndex) {
         if (columnIndex == 0) {
             if (aValue instanceof Boolean) {
-                getElement(rowIndex).setEnabled(((Boolean) aValue).booleanValue());
+                getElement(rowIndex).setEnabled((Boolean) aValue);
                 fireTableCellUpdated(rowIndex, columnIndex);
             }
         }

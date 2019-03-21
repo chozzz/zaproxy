@@ -22,13 +22,17 @@ package org.zaproxy.zap.control;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 import org.apache.commons.configuration.ConfigurationException;
 import org.apache.commons.configuration.HierarchicalConfiguration;
 import org.apache.commons.configuration.tree.xpath.XPathExpressionEngine;
+import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
+import org.parosproxy.paros.Constant;
 import org.zaproxy.zap.Version;
 import org.zaproxy.zap.utils.ZapXmlConfiguration;
 
@@ -93,6 +97,8 @@ public abstract class BaseZapAddOnXmlData {
 
     private static final Logger LOGGER = Logger.getLogger(BaseZapAddOnXmlData.class);
 
+    private static final List<String> ADDON_STATUSES = Arrays.asList("alpha", "beta", "release");
+
     private static final String NAME_ELEMENT = "name";
     private static final String STATUS = "status";
     private static final String VERSION_ELEMENT = "version";
@@ -152,9 +158,12 @@ public abstract class BaseZapAddOnXmlData {
      * data.
      * 
      * @param inputStream the source of the {@code ZapAddOn} XML data.
+     * @throws NullPointerException if the given input stream is {@code null}.
      * @throws IOException if an error occurs while reading the data
      */
     public BaseZapAddOnXmlData(InputStream inputStream) throws IOException {
+        Objects.requireNonNull(inputStream, "The InputStream must not be null.");
+
         ZapXmlConfiguration zapAddOnXml = new ZapXmlConfiguration();
         zapAddOnXml.setExpressionEngine(new XPathExpressionEngine());
 
@@ -192,7 +201,17 @@ public abstract class BaseZapAddOnXmlData {
             version = new Version(Integer.parseInt(v) + ".0.0");
         }
 
-        status = zapAddOnXml.getString(STATUS, "alpha");
+        status = zapAddOnXml.getString(STATUS);
+        if (status == null) {
+            LOGGER.log(
+                    Constant.isDevMode() ? Level.ERROR : Level.WARN,
+                    "No status specified for " + name
+                            + ", defaulting to \"alpha\". Add-ons should declare its status in the manifest.");
+            status = "alpha";
+        } else if (!ADDON_STATUSES.contains(status)) {
+            throw new IllegalArgumentException(
+                    "Unrecognised status \"" + status + "\" in " + name + ", expected one of " + ADDON_STATUSES);
+        }
         semVer = createVersion(zapAddOnXml.getString(SEM_VER_ELEMENT, ""));
         description = zapAddOnXml.getString(DESCRIPTION_ELEMENT, "");
         author = zapAddOnXml.getString(AUTHOR_ELEMENT, "");

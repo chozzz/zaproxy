@@ -27,7 +27,6 @@ import org.zaproxy.zap.authentication.UsernamePasswordAuthenticationCredentials.
 import org.zaproxy.zap.extension.api.ApiDynamicActionImplementor;
 import org.zaproxy.zap.extension.api.ApiException;
 import org.zaproxy.zap.extension.api.ApiResponse;
-import org.zaproxy.zap.extension.api.ApiResponseSet;
 import org.zaproxy.zap.extension.authentication.AuthenticationAPI;
 import org.zaproxy.zap.model.Context;
 import org.zaproxy.zap.session.SessionManagementMethod;
@@ -66,7 +65,7 @@ public class HttpAuthenticationMethodType extends AuthenticationMethodType {
 	 * The implementation for an {@link AuthenticationMethodType} where the Users are authenticated
 	 * through HTTP Authentication.
 	 */
-	protected static class HttpAuthenticationMethod extends AuthenticationMethod {
+	public static class HttpAuthenticationMethod extends AuthenticationMethod {
 
 		public HttpAuthenticationMethod() {
 			super();
@@ -75,6 +74,18 @@ public class HttpAuthenticationMethodType extends AuthenticationMethodType {
 		protected String hostname;
 		protected int port = 80;
 		protected String realm;
+
+		public void setHostname(String hostname) {
+			this.hostname = hostname;
+		}
+
+		public void setPort(int port) {
+			this.port = port;
+		}
+
+		public void setRealm(String realm) {
+			this.realm = realm;
+		}
 
 		@Override
 		public boolean isConfigured() {
@@ -139,7 +150,7 @@ public class HttpAuthenticationMethodType extends AuthenticationMethodType {
 			values.put("host", this.hostname);
 			values.put("port", Integer.toString(this.port));
 			values.put("realm", this.realm);
-			return new ApiResponseSet<String>("method", values);
+			return new AuthMethodApiResponseRepresentation<>(values);
 		}
 
 	}
@@ -317,6 +328,11 @@ public class HttpAuthenticationMethodType extends AuthenticationMethodType {
 	}
 
 	@Override
+	public Class<UsernamePasswordAuthenticationCredentials> getAuthenticationCredentialsType() {
+		return UsernamePasswordAuthenticationCredentials.class;
+	}
+
+	@Override
 	public ApiDynamicActionImplementor getSetMethodForContextApiAction() {
 		return new ApiDynamicActionImplementor(API_METHOD_NAME, new String[] { PARAM_HOSTNAME, PARAM_REALM },
 				new String[] { PARAM_PORT }) {
@@ -344,8 +360,6 @@ public class HttpAuthenticationMethodType extends AuthenticationMethodType {
 						throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, PARAM_PORT);
 					}
 
-				if (!context.getAuthenticationMethod().isSameType(method))
-					apiChangedAuthenticationMethodForContext(context.getIndex());
 				context.setAuthenticationMethod(method);
 
 			}

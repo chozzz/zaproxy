@@ -67,6 +67,9 @@
 // ZAP: 2017/03/16 Allow to initialise Control without starting the Local Proxy.
 // ZAP: 2017/06/07 Allow to persist the session properties (e.g. name, description).
 // ZAP: 2017/08/31 Use helper method I18N.getString(String, Object...).
+// ZAP: 2018/01/04 Do not notify extensions if failed to change the session.
+// ZAP: 2018/01/12 Save configurations as last shutdown action.
+// ZAP: 2019/03/14 Improve error handling on shutdown
 
 package org.parosproxy.paros.control;
 
@@ -181,21 +184,26 @@ public class Control extends AbstractControl implements SessionListener {
      */
     @Override
     public void shutdown(boolean compact) {
-        // ZAP: Save the configurations of the main panels.
-        if (view != null) {
-	        view.getRequestPanel().saveConfig(model.getOptionsParam().getConfig());
-	        view.getResponsePanel().saveConfig(model.getOptionsParam().getConfig());
+        try {
+            if (view != null) {
+                view.getRequestPanel().saveConfig(model.getOptionsParam().getConfig());
+                view.getResponsePanel().saveConfig(model.getOptionsParam().getConfig());
+            }
+
+            getProxy(null).stopServer();
+            super.shutdown(compact);
+        } finally {
+            // Ensure all extensions' config changes done during shutdown are saved.
+            saveConfigurations();
         }
-        
-	    // ZAP: Save the configuration file.
-		try {
-			model.getOptionsParam().getConfig().save();
-		} catch (ConfigurationException e) {
-			log.error("Error saving config", e);
-		}
-		
-        getProxy(null).stopServer();
-        super.shutdown(compact);
+    }
+
+    private void saveConfigurations() {
+        try {
+            model.getOptionsParam().getConfig().save();
+        } catch (ConfigurationException e) {
+            log.error("Error saving configurations:", e);
+        }
     }
     
     public void exit (boolean noPrompt, final File openOnExit) {
@@ -243,20 +251,25 @@ public class Control extends AbstractControl implements SessionListener {
 	        @Override
 	        public void run() {
 	            // ZAP: Changed to use the option compact database.
-	            control.shutdown(Model.getSingleton().getOptionsParam().getDatabaseParam().isCompactDatabase());
-	    	    log.info(Constant.PROGRAM_TITLE + " terminated.");
-	    	    
-	    	    if (openOnExit != null && Desktop.isDesktopSupported()) {
-					try {
-			    	    log.info("Openning file " + openOnExit.getAbsolutePath());
-						Desktop.getDesktop().open(openOnExit);
-					} catch (IOException e) {
-						log.error("Failed to open file " + openOnExit.getAbsolutePath(), e);
-					}
-	    	    }
-	    		System.exit(0);   
+                try {
+                    control.shutdown(Model.getSingleton().getOptionsParam().getDatabaseParam().isCompactDatabase());
+                    log.info(Constant.PROGRAM_TITLE + " terminated.");
+
+                    if (openOnExit != null && Desktop.isDesktopSupported()) {
+                        try {
+                            log.info("Openning file " + openOnExit.getAbsolutePath());
+                            Desktop.getDesktop().open(openOnExit);
+                        } catch (IOException e) {
+                            log.error("Failed to open file " + openOnExit.getAbsolutePath(), e);
+                        }
+                    }
+                } catch (Throwable e) {
+                    log.error("An error occurred while shutting down:", e);
+                } finally {
+                    System.exit(0);
+                }
 	        }
-	    });
+	    }, "ZAP-Shutdown");
 
 	    if (view != null) {
 		    WaitMessageDialog dialog = view.getWaitMessageDialog(Constant.messages.getString("menu.file.shuttingDown"));	// ZAP: i18n
@@ -504,8 +517,8 @@ public class Control extends AbstractControl implements SessionListener {
 
 	@Override
 	public void sessionOpened(File file, Exception e) {
-		getExtensionLoader().databaseOpen(model.getDb());
-		getExtensionLoader().sessionChangedAllPlugin(model.getSession());
+		notifyExtensionsSessionChanged(e);
+
 		if (lastCallback != null) {
 			lastCallback.sessionOpened(file, e);
 			lastCallback = null;
@@ -513,10 +526,22 @@ public class Control extends AbstractControl implements SessionListener {
 		
 	}
 
+	/**
+	 * Notifies the extensions that the session changed, if the given exception is {@code null}.
+	 *
+	 * @param exception the exception that happened when changing the session, or {@code null} if none.
+	 */
+	private void notifyExtensionsSessionChanged(Exception exception) {
+		if (exception == null) {
+			getExtensionLoader().databaseOpen(model.getDb());
+			getExtensionLoader().sessionChangedAllPlugin(model.getSession());
+		}
+	}
+
 	@Override
 	public void sessionSaved(Exception e) {
-		getExtensionLoader().databaseOpen(model.getDb());
-		getExtensionLoader().sessionChangedAllPlugin(model.getSession());
+		notifyExtensionsSessionChanged(e);
+
 		if (lastCallback != null) {
 			lastCallback.sessionSaved(e);
 			lastCallback = null;

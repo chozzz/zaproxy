@@ -18,6 +18,7 @@
 package org.parosproxy.paros.extension.manualrequest.http.impl;
 
 import java.awt.EventQueue;
+import java.awt.event.ItemEvent;
 import java.io.IOException;
 import java.net.Socket;
 import java.net.UnknownHostException;
@@ -88,6 +89,8 @@ public class HttpPanelSender implements MessageSender {
     @Override
     public void handleSendMessage(Message aMessage) throws IllegalArgumentException, IOException {
         final HttpMessage httpMessage = (HttpMessage) aMessage;
+        // Reset the user before sending (e.g. Forced User mode sets the user, if needed).
+        httpMessage.setRequestingUser(null);
         try {
             final ModeRedirectionValidator redirectionValidator = new ModeRedirectionValidator();
             boolean followRedirects = getButtonFollowRedirects().isSelected();
@@ -200,10 +203,6 @@ public class HttpPanelSender implements MessageSender {
             delegate.shutdown();
             delegate = null;
         }
-
-        final boolean isSessionTrackingEnabled = Model.getSingleton()
-                .getOptionsParam().getConnectionParam().isHttpStateEnabled();
-        getButtonUseTrackingSessionState().setEnabled(isSessionTrackingEnabled);
     }
 
     private HttpSender getDelegate() {
@@ -237,6 +236,7 @@ public class HttpPanelSender implements MessageSender {
                     .getResource("/resource/icon/fugue/cookie.png"))); // Cookie
             useTrackingSessionState.setToolTipText(Constant.messages
                     .getString("manReq.checkBox.useSession"));
+            useTrackingSessionState.addItemListener(e -> setUseTrackingSessionState(e.getStateChange() == ItemEvent.SELECTED));
         }
         return useTrackingSessionState;
     }
@@ -308,5 +308,16 @@ public class HttpPanelSender implements MessageSender {
         public URI getInvalidRedirection() {
             return invalidRedirection;
         }
+    }
+    
+    private void setUseTrackingSessionState(boolean shouldUseTrackingSessionState) {
+        if (delegate != null) {
+            delegate.setUseGlobalState(shouldUseTrackingSessionState);
+        }
+    }
+    
+    public void setButtonTrackingSessionStateEnabled(boolean enabled) {
+        getButtonUseTrackingSessionState().setEnabled(enabled);
+        getButtonUseTrackingSessionState().setSelected(enabled);
     }
 }

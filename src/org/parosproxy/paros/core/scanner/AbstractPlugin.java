@@ -56,6 +56,9 @@
 // ZAP: 2017/05/31 Remove re-declaration of methods.
 // ZAP: 2017/10/31 Use ExtensionLoader.getExtension(Class).
 // ZAP: 2017/11/14 Notify completion in a finally block.
+// ZAP: 2017/12/29 Rely on HostProcess to validate the redirections.
+// ZAP: 2018/02/02 Add helper method to check if any of several techs is in scope.
+// ZAP: 2018/08/15 Implemented hashCode
 
 package org.parosproxy.paros.core.scanner;
 
@@ -66,12 +69,12 @@ import java.net.URLEncoder;
 import java.security.InvalidParameterException;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.configuration.Configuration;
 import org.apache.commons.httpclient.HttpException;
-import org.apache.commons.httpclient.URI;
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.control.Control;
 import org.parosproxy.paros.extension.encoder.Encoder;
@@ -82,8 +85,6 @@ import org.zaproxy.zap.extension.anticsrf.AntiCsrfToken;
 import org.zaproxy.zap.extension.anticsrf.ExtensionAntiCSRF;
 import org.zaproxy.zap.model.Tech;
 import org.zaproxy.zap.model.TechSet;
-import org.zaproxy.zap.network.HttpRedirectionValidator;
-import org.zaproxy.zap.network.HttpRequestConfig;
 
 public abstract class AbstractPlugin implements Plugin, Comparable<Object> {
 
@@ -114,16 +115,6 @@ public abstract class AbstractPlugin implements Plugin, Comparable<Object> {
     private Date started = null;
     private Date finished = null;
     private AddOn.Status status = AddOn.Status.unknown;
-
-    /**
-     * The HTTP request configuration, uses a {@link HttpRedirectionValidator} that ensures the followed redirections are in
-     * scan's scope.
-     * <p>
-     * Lazily initialised.
-     * 
-     * @see #getHttpRequestConfig()
-     */
-    private HttpRequestConfig httpRequestConfig;
 
     /**
      * Default Constructor
@@ -157,9 +148,6 @@ public abstract class AbstractPlugin implements Plugin, Comparable<Object> {
     public void init(HttpMessage msg, HostProcess parent) {
         this.msg = msg.cloneAll();
         this.parent = parent;
-        if (this.parent.getScannerParam().isInjectPluginIdInHeader()) {
-    		this.msg.getRequestHeader().setHeader(HttpHeader.X_ZAP_SCAN_ID, Integer.toString(getId()));
-    	}
         init();
     }
 
@@ -282,6 +270,10 @@ public abstract class AbstractPlugin implements Plugin, Comparable<Object> {
             }
         }
 
+        if (this.parent.getScannerParam().isInjectPluginIdInHeader()) {
+    		this.msg.getRequestHeader().setHeader(HttpHeader.X_ZAP_SCAN_ID, Integer.toString(getId()));
+    	}
+
         // always get the fresh copy
         message.getRequestHeader().setHeader(HttpHeader.IF_MODIFIED_SINCE, null);
         message.getRequestHeader().setHeader(HttpHeader.IF_NONE_MATCH, null);
@@ -299,7 +291,7 @@ public abstract class AbstractPlugin implements Plugin, Comparable<Object> {
         parent.performScannerHookBeforeScan(message, this);
 
         if (isFollowRedirect) {
-            parent.getHttpSender().sendAndReceive(message, getHttpRequestConfig());
+            parent.getHttpSender().sendAndReceive(message, getParent().getRedirectRequestConfig());
         } else {
             parent.getHttpSender().sendAndReceive(message, false);
         }
@@ -309,36 +301,6 @@ public abstract class AbstractPlugin implements Plugin, Comparable<Object> {
         
         //ZAP: Set the history reference back and run the "afterScan" methods of any ScannerHooks
         parent.performScannerHookAfterScan(message, this);
-    }
-
-    /**
-     * Gets the HTTP request configuration, that ensures the followed redirections are in scan's scope.
-     *
-     * @return the HTTP request configuration, never {@code null}.
-     * @see #httpRequestConfig
-     */
-    private HttpRequestConfig getHttpRequestConfig() {
-        if (httpRequestConfig == null) {
-            httpRequestConfig = HttpRequestConfig.builder().setRedirectionValidator(new HttpRedirectionValidator() {
-
-                @Override
-                public boolean isValid(URI redirection) {
-                    if (!getParent().nodeInScope(redirection.getEscapedURI())) {
-                        if (log.isDebugEnabled()) {
-                            log.debug("Skipping redirection out of scan's scope: " + redirection);
-                        }
-                        return false;
-                    }
-                    return true;
-                }
-
-                @Override
-                public void notifyMessageReceived(HttpMessage message) {
-                    // Nothing to do with the message.
-                }
-            }).build();
-        }
-        return httpRequestConfig;
     }
 
     private void regenerateAntiCsrfToken(HttpMessage msg, AntiCsrfToken antiCsrfToken) {
@@ -721,6 +683,11 @@ public abstract class AbstractPlugin implements Plugin, Comparable<Object> {
         return false;
     }
 
+    @Override
+    public int hashCode() {
+        return Objects.hash(this.getId());
+    }
+    
     /**
      * Check if the given pattern can be found in the header.
      *
@@ -942,9 +909,31 @@ public abstract class AbstractPlugin implements Plugin, Comparable<Object> {
         this.delayInMs = delayInMs;
     }
 
+    /**
+     * @see #isAnyInScope(Tech...)
+     */
     @Override
     public boolean inScope(Tech tech) {
         return this.techSet.includes(tech);
+    }
+
+    /**
+     * Tells whether or not any of the given technologies is enabled for the scan.
+     * <p>
+     * Helper method to check if any of the related technologies is enabled before performing a test/scan. For example:
+     * <pre> {@code
+     * if (isAnyInScope(Tech.Linux, Tech.MacOS)) {
+     *     // Perform nix test...
+     * }}</pre>
+     * 
+     * @param techs the technologies that will be checked.
+     * @return {@code true} if any of the technologies is enabled for the scan, {@code false} otherwise.
+     * @since TODO add version
+     * @see #inScope(Tech)
+     * @see #targets(TechSet)
+     */
+    protected boolean isAnyInScope(Tech... techs) {
+        return this.techSet.includesAny(techs);
     }
 
     @Override

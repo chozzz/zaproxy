@@ -79,7 +79,7 @@ elif [ "$OS" = "FreeBSD" ]; then
 fi
 
 if [ ! -z "$JMEM" ]; then
-  echo "Using jvm memory setting from $JVMPROPS"
+  echo "Read custom JVM args from $JVMPROPS"
   JAVAGC=""
 elif [ -z "$MEM" ]; then
   echo "Failed to obtain current memory, using jvm default memory settings"
@@ -99,6 +99,12 @@ for var in "$@"; do
   if [[ "$var" == -Xmx* ]]; then
     # Overridden by the user
     JMEM="$var"
+  elif [[ $var == --jvmdebug* ]]; then
+	JAVADEBUGPORT=`echo "$var" | sed -e "s/--jvmdebug//g" | sed -e "s/=//g"`
+	if [ ! "$JAVADEBUGPORT" ]; then
+		JAVADEBUGPORT=1044
+	fi
+	JAVADEBUG="-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:$JAVADEBUGPORT"
   elif [[ $var != -psn_* ]]; then
     # Strip the automatic -psn_x_xxxxxxx argument that OS X automatically passes into apps, since
     # it freaks out ZAP
@@ -108,7 +114,12 @@ done
 
 if [ -n "$JMEM" ]
 then
-  echo "Setting jvm heap size: $JMEM"
+  echo "Using JVM args: $JMEM"
+fi
+
+if [ -n "$JAVADEBUG" ]
+then
+  echo "Setting debug: $JAVADEBUG"
 fi
 
 # Start ZAP; it's likely that -Xdock:icon would be ignored on other platforms, but this is known to work
@@ -116,5 +127,5 @@ if [ "$OS" = "Darwin" ]; then
   # It's likely that -Xdock:icon would be ignored on other platforms, but this is known to work
   exec java ${JMEM} ${JAVAGC} -Xdock:icon="../Resources/ZAP.icns" -jar "${BASEDIR}/zap-dev.jar" "${ARGS[@]}"
 else
-  exec java ${JMEM} ${JAVAGC} -jar "${BASEDIR}/zap-dev.jar" "${ARGS[@]}"
+  exec java ${JMEM} ${JAVAGC} ${JAVADEBUG} -jar "${BASEDIR}/zap-dev.jar" "${ARGS[@]}"
 fi

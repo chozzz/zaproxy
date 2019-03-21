@@ -32,7 +32,7 @@ import org.parosproxy.paros.network.HttpMessage;
 
 /**
  * Variant class used for URL path elements. For a URL like:
- * http://www.example.com/aaa/bbb/ccc?ddd=eee&fff=ggg it will handle: aaa, bbb
+ * {@literal http://www.example.com/aaa/bbb/ccc?ddd=eee&fff=ggg} it will handle: aaa, bbb
  * and ccc
  *
  * @author psiinon
@@ -149,7 +149,7 @@ public class VariantURLPath implements Variant {
                     uri.setEscapedPath(path);
 
                 } catch (URIException e) {
-                    // Looks like it wasnt escaped after all
+                    // Looks like it wasn't escaped after all
                     uri.setPath(path);                    
                 }
             }

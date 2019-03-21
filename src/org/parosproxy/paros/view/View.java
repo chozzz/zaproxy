@@ -75,11 +75,15 @@
 // ZAP: 2017/09/02 Use KeyEvent instead of Event (deprecated in Java 9).
 // ZAP: 2017/10/20 Implement method to expose default delete keyboard shortcut (Issue 3626).
 // ZAP: 2017/10/31 Use ExtensionLoader.getExtension(Class).
+// ZAP: 2018/01/08 Expand first context added.
+// ZAP: 2018/03/30 Check if resource message exists (for changes in I18N).
+// ZAP: 2018/07/13 Added canGetFocus option
+// ZAP: 2018/07/17 Use getMenuShortcutKeyStroke.
+// ZAP: 2019/01/04 Keep Show Tab menu item in the position it was added.
 
 package org.parosproxy.paros.view;
 
 import java.awt.Component;
-import java.awt.Toolkit;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -89,7 +93,6 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.MissingResourceException;
 import java.util.Vector;
 
 import javax.swing.ImageIcon;
@@ -217,6 +220,11 @@ public class View implements ViewDelegate {
      * Lazily initialised in {@link #getDefaultDeleteKeyStroke()}.
      */
     private KeyStroke defaultDeleteKeyStroke;
+    
+    /**
+     * If true then the UI can request focus from other applications, if false then it should not
+     */
+    private boolean canGetFocus = true;
 
     /**
      * @return Returns the mainFrame.
@@ -276,19 +284,12 @@ public class View implements ViewDelegate {
         
         String statusString;
         for(Status status : AddOn.Status.values()) {     	
-        	//Try/catch in case AddOn.Status gets out of sync with cfu.status i18n entries
-        	try {
-        		statusString = Constant.messages.getString("cfu.status." + status.toString());
-        	} catch (MissingResourceException mre) {
+        	// Handle the case AddOn.Status gets out of sync with cfu.status i18n entries
+        	String i18nKey = "cfu.status." + status.toString();
+        	if (Constant.messages.containsKey(i18nKey)) {
+        		statusString = Constant.messages.getString(i18nKey);
+        	} else {
         		statusString = status.toString();
-        		
-        		String errString="Caught " + mre.getClass().getName() + " " + mre.getMessage() + 
-						" when looking for i18n string: cfu.status." + statusString;
-        		if (Constant.isDevBuild()) {
-        			logger.error(errString);
-        		} else {
-        			logger.warn(errString);
-        		}
         	}
         	statusMap.put(status, new StatusUI(status, statusString));
         }
@@ -362,12 +363,12 @@ public class View implements ViewDelegate {
     }
 
     public void refreshTabViewMenus() {
-        if (menuShowTabs != null) {
-            // Remove the old ones
-            mainFrame.getMainMenuBar().getMenuView().remove(menuShowTabs);
+        if (menuShowTabs == null) {
+            menuShowTabs = new JMenu(Constant.messages.getString("menu.view.showtab"));
+            mainFrame.getMainMenuBar().getMenuView().add(menuShowTabs);
+        } else {
+            menuShowTabs.removeAll();
         }
-        menuShowTabs = new JMenu(Constant.messages.getString("menu.view.showtab"));
-        mainFrame.getMainMenuBar().getMenuView().add(menuShowTabs);
 
         ExtensionKeyboard extKey = Control.getSingleton().getExtensionLoader().getExtension(ExtensionKeyboard.class);
 
@@ -433,7 +434,7 @@ public class View implements ViewDelegate {
     }
 
     /**
-     * Close the curren splash screen and remove all resources
+     * Close the current splash screen and remove all resources
      */
     public void hideSplashScreen() {
         if (splashScreen != null) {
@@ -443,7 +444,7 @@ public class View implements ViewDelegate {
     }
     
     /**
-     * Set the curent loading completion
+     * Set the current loading completion
      * @param percentage the percentage of completion from 0 to 100
      */
     public void setSplashScreenLoadingCompletion(double percentage) {
@@ -453,7 +454,7 @@ public class View implements ViewDelegate {
     }
     
     /**
-     * Add the curent loading completion
+     * Add the current loading completion
      * @param percentage the percentage of completion from 0 to 100 that need to be added
      */
     public void addSplashScreenLoadingCompletion(double percentage) {
@@ -627,8 +628,7 @@ public class View implements ViewDelegate {
             requestPanel.setName(Constant.messages.getString("http.panel.request.title"));	// ZAP: i18n
             requestPanel.setEnableViewSelect(true);
             requestPanel.loadConfig(Model.getSingleton().getOptionsParam().getConfig());
-            requestPanel.setDefaultAccelerator(KeyStroke.getKeyStroke(
-                    KeyEvent.VK_R, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask() | KeyEvent.SHIFT_DOWN_MASK, false));
+            requestPanel.setDefaultAccelerator(getMenuShortcutKeyStroke(KeyEvent.VK_R, KeyEvent.SHIFT_DOWN_MASK, false));
             requestPanel.setMnemonic(Constant.messages.getChar("http.panel.request.mnemonic"));
 
         }
@@ -645,8 +645,8 @@ public class View implements ViewDelegate {
             responsePanel.setName(Constant.messages.getString("http.panel.response.title"));	// ZAP: i18n
             responsePanel.setEnableViewSelect(false);
             responsePanel.loadConfig(Model.getSingleton().getOptionsParam().getConfig());
-            responsePanel.setDefaultAccelerator(KeyStroke.getKeyStroke(
-                    KeyEvent.VK_R, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask() | KeyEvent.ALT_DOWN_MASK | KeyEvent.SHIFT_DOWN_MASK, false));
+            responsePanel.setDefaultAccelerator(
+                    getMenuShortcutKeyStroke(KeyEvent.VK_R, KeyEvent.ALT_DOWN_MASK | KeyEvent.SHIFT_DOWN_MASK, false));
             responsePanel.setMnemonic(Constant.messages.getChar("http.panel.response.mnemonic"));
         }
         return responsePanel;
@@ -713,6 +713,7 @@ public class View implements ViewDelegate {
     }
 
     public void addContext(Context c) {
+        boolean expandContextNode = contextPanels.isEmpty();
         getSessionDialog().createUISharedContext(c);
 
         String contextsNodeName = Constant.messages.getString("context.list");
@@ -746,6 +747,10 @@ public class View implements ViewDelegate {
             addPanelForContext(c, cpf, contextPanelPath);
         }
         this.getSiteTreePanel().reloadContextTree();
+
+        if (expandContextNode) {
+            getSessionDialog().expandParamPanelNode(contextGenPanel.getName());
+        }
     }
 
     /**
@@ -1042,5 +1047,23 @@ public class View implements ViewDelegate {
         } else {
             getResponsePanel().setMessage(httpMessage, true);
         }
+    }
+
+    /**
+     * If true then the UI can request focus from other applications, if false then it should not
+     * @return true if the UI can request focus from other applications
+     * @since TODO add version
+     */
+    public boolean isCanGetFocus() {
+        return canGetFocus;
+    }
+
+    /**
+     * Set whether the UI can request focus from other applications
+     * @param canGetFocus if true then the UI can request focus from other applications, otherwise it should not
+     * @since TODO add version
+     */
+    public void setCanGetFocus(boolean canGetFocus) {
+        this.canGetFocus = canGetFocus;
     }
 }

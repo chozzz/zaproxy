@@ -121,7 +121,7 @@ class SpiderMessagesTableModel
             @Override
             public void run() {
                 final int row = resources.size();
-                idsToRows.put(Integer.valueOf(entry.getHistoryId()), Integer.valueOf(row));
+                idsToRows.put(Integer.valueOf(entry.getHistoryId()), row);
                 resources.add(entry);
                 fireTableRowsInserted(row, row);
             }
@@ -187,9 +187,9 @@ class SpiderMessagesTableModel
 
     @Override
     public int getEntryRowIndex(int historyReferenceId) {
-        final Integer row = idsToRows.get(Integer.valueOf(historyReferenceId));
+        final Integer row = idsToRows.get(historyReferenceId);
         if (row != null) {
-            return row.intValue();
+            return row;
         }
         return -1;
     }
@@ -355,9 +355,9 @@ class SpiderMessagesTableModel
                 refreshEntry(Integer.valueOf(event.getParameters().get(AlertEventPublisher.HISTORY_REFERENCE_ID)));
                 break;
             case AlertEventPublisher.ALL_ALERTS_REMOVED_EVENT:
-            default:
                 refreshEntries();
                 break;
+            default:
             }
         }
 

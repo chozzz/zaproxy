@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
 
 import javax.swing.tree.TreeNode;
 
@@ -38,6 +39,8 @@ import org.apache.log4j.Logger;
 import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.control.Control;
 import org.parosproxy.paros.control.Control.Mode;
+import org.parosproxy.paros.core.scanner.NameValuePair;
+import org.parosproxy.paros.core.scanner.VariantMultipartFormParameters;
 import org.parosproxy.paros.db.DatabaseException;
 import org.parosproxy.paros.db.RecordParam;
 import org.parosproxy.paros.extension.ExtensionAdaptor;
@@ -82,6 +85,11 @@ public class ExtensionParams extends ExtensionAdaptor
         super(NAME);
         this.setOrder(58);
 	}
+
+    @Override
+    public boolean supportsDb(String type) {
+        return true;
+    }
 	
     @Override
     public String getUIName() {
@@ -225,7 +233,7 @@ public class ExtensionParams extends ExtensionAdaptor
 		}
 		
 		// Repopulate
-		SiteNode root = (SiteNode)session.getSiteTree().getRoot();
+		SiteNode root = session.getSiteTree().getRoot();
 		@SuppressWarnings("unchecked")
 		Enumeration<TreeNode> en = root.children();
 		while (en.hasMoreElements()) {
@@ -300,6 +308,16 @@ public class ExtensionParams extends ExtensionAdaptor
 			persist(sps.addParam(site, param, msg));
 		}
 		
+		VariantMultipartFormParameters params2 = new VariantMultipartFormParameters();
+		params2.setMessage(msg);
+		for (NameValuePair nvp : params2.getParamList()) {
+			if (nvp.getType() == NameValuePair.TYPE_MULTIPART_DATA_PARAM
+					|| nvp.getType() == NameValuePair.TYPE_MULTIPART_DATA_FILE_NAME) {
+				persist(sps.addParam(site, new HtmlParameter(HtmlParameter.Type.multipart, nvp.getName(), nvp.getValue()),
+						msg));
+			}
+		}
+		
 		return true;
 	}
 	
@@ -332,7 +350,16 @@ public class ExtensionParams extends ExtensionAdaptor
 						param.getId(), param.getTimesUsed(), setToString(param.getFlags()), setToString(param.getValues()));
 			}
 		} catch (DatabaseException e) {
-			logger.error(e.getMessage(), e);
+			if (e.getCause().getMessage().contains("truncation")) {
+				logger.warn("Could not add or update param: " + param.getName());
+				logger.warn("It is likely that the length of one of the data elements exceeded the column size.");
+				logger.warn(e.getMessage());
+				if (logger.isDebugEnabled()) {
+					logger.debug(e.getMessage(), e);
+				}
+			} else {
+				logger.error(e.getMessage(), e);
+			}
 		}
 	}
 
@@ -401,14 +428,17 @@ public class ExtensionParams extends ExtensionAdaptor
 
 			if (extSearch != null) {
 				if (HtmlParameter.Type.url.equals(item.getType())) {
-					extSearch.search("[?&]" + item.getName() + "=.*", ExtensionSearch.Type.URL, true, false);
+					extSearch.search("[?&]" + Pattern.quote(item.getName()) + "=.*", ExtensionSearch.Type.URL, true, false);
 				} else if (HtmlParameter.Type.cookie.equals(item.getType())) {
-						extSearch.search(/*".*" + */item.getName() + "=.*", ExtensionSearch.Type.Header, true, false);
+						extSearch.search(Pattern.quote(item.getName()) + "=.*", ExtensionSearch.Type.Header, true, false);
 				} else if (HtmlParameter.Type.header.equals(item.getType())) {
-					extSearch.search(item.getName() + ":.*", ExtensionSearch.Type.Header, true, false);
+					extSearch.search(Pattern.quote(item.getName()) + ":.*", ExtensionSearch.Type.Header, true, false);
+				} else if (HtmlParameter.Type.multipart.equals(item.getType())) {
+					extSearch.search("(?i)\\s*content-disposition\\s*:.*\\s+name\\s*\\=?\\s*\\\"?"
+							+ Pattern.quote(item.getName()), ExtensionSearch.Type.Request, true, false);
 				} else {
 					// FORM
-					extSearch.search(/*".*" + */item.getName() + "=.*", ExtensionSearch.Type.Request, true, false);
+					extSearch.search(Pattern.quote(item.getName()) + "=.*", ExtensionSearch.Type.Request, true, false);
 				}
 			}
 		}
@@ -486,8 +516,7 @@ public class ExtensionParams extends ExtensionAdaptor
 	}
 
 	public Collection<SiteParameters> getAllSiteParameters() {
-		Collection<SiteParameters> values = this.siteParamsMap.values();
-		return values;
+		return this.siteParamsMap.values();
 	}
 
 	/**

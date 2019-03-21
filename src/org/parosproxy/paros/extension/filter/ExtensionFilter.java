@@ -38,6 +38,7 @@
 // ZAP: 2015/03/16 Issue 1525: Further database independence changes
 // ZAP: 2016/06/28 Do not start the timer thread if no filter is enabled
 // ZAP: 2017/04/07 Added getUIName()
+// ZAP: 2017/12/28 Add deprecated annotation and JavaDoc tag.
 
 package org.parosproxy.paros.extension.filter;
 
@@ -54,6 +55,10 @@ import org.parosproxy.paros.model.Model;
 import org.parosproxy.paros.network.HttpMessage;
 import org.zaproxy.zap.view.ZapMenuItem;
 
+/**
+ * @deprecated (TODO add version) Filters were superseded by scripts and Replacer add-on.
+ */
+@Deprecated
 public class ExtensionFilter extends ExtensionAdaptor implements ProxyListener {
 
 	private static final Logger log = Logger.getLogger(ExtensionFilter.class);
@@ -70,6 +75,11 @@ public class ExtensionFilter extends ExtensionAdaptor implements ProxyListener {
         this.setOrder(8);
     }
     
+    @Override
+    public boolean isDepreciated() {
+        return true;
+    }
+
     @Override
     public String getUIName() {
     	return Constant.messages.getString("filter.name");
@@ -287,10 +297,10 @@ public class ExtensionFilter extends ExtensionAdaptor implements ProxyListener {
 	 * Does a binary search for the given filter id. Used to determine where
 	 * (index) to insert the filter to the filter's list.
 	 * 
-	 * @param A
-	 * @param key
-	 * @param imin
-	 * @param imax
+	 * @param filters
+	 * @param targetId
+	 * @param min
+	 * @param max
 	 * @return
 	 */
 	// ZAP: Added the method.

@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 
 import org.apache.commons.httpclient.URI;
 import org.parosproxy.paros.Constant;
@@ -154,10 +155,9 @@ public class WebUI {
 				// This is the default, but it can be overriden by the getDescriptionTag method if required
 				descTag = component + ".api." + type + "." + element.getName();
 			}
-			try {
+			if (Constant.messages.containsKey(descTag)) {
 				sb.append(Constant.messages.getString(descTag));
-			} catch (Exception e) {
-				// Might not be set, so ignore failures
+			} else {
 				// Uncomment to see what tags are missing via the UI
 				// sb.append(descTag);
 			}
@@ -245,10 +245,8 @@ public class WebUI {
 					// This is the default, but it can be overriden by the getDescriptionTag method if required
 					descTag = component + ".api." + reqType.name() + "." + name;
 				}
-				try {
+				if (Constant.messages.containsKey(descTag)) {
 					sb.append(Constant.messages.getString(descTag));
-				} catch (Exception e) {
-					// Might not be set, so ignore failures
 				}
 				
 				sb.append("\n<form id=\"zapform\" name=\"zapform\" action=\"override\">");
@@ -257,7 +255,7 @@ public class WebUI {
 					sb.append("<tr><td>");
 					sb.append(Constant.messages.getString("api.html.format"));
 					sb.append("</td><td>\n");
-					sb.append("<select id=\"zapapiformat\" name=\"zapapiformat\">\n");
+					sb.append("<select id=\"zapapiformat\">\n");
 					sb.append("<option value=\"JSON\">JSON</option>\n");
 					if (getOptionsParamApi().isEnableJSONP()) {
 						sb.append("<option value=\"JSONP\">JSONP</option>\n");
@@ -291,7 +289,7 @@ public class WebUI {
 						sb.append("\" value=\"");
 						if (this.isDevTestNonce && RequestType.other.equals(reqType)) {
 							sb.append(api.getOneTimeNonce("/" + 
-									reqType.name().toUpperCase() + "/" + 
+									reqType.name().toUpperCase(Locale.ROOT) + "/" + 
 									impl.getPrefix() + "/" + 
 									reqType.name() + "/" + 
 									element.getName() + "/"));
@@ -309,7 +307,7 @@ public class WebUI {
 					sb.append(Constant.messages.getString("api.html.formMethod"));
 					sb.append("</td>");
 					sb.append("<td>");
-					sb.append("<select name=\"formMethod\">\n");
+					sb.append("<select id=\"formMethod\">\n");
 					sb.append("<option value=\"GET\" selected>GET</option>\n");
 					sb.append("<option value=\"POST\">POST</option>\n");
 					sb.append("</select>\n");
@@ -355,7 +353,7 @@ public class WebUI {
 				sb.append("<td>");
 				sb.append("<input id=\"button\" value=\"");
 				sb.append(element.getName());
-				sb.append("\" type=\"button\" zap-component=\"" + component + 
+				sb.append("\" type=\"submit\" zap-component=\"" + component + 
 						"\" zap-type=\"" + reqType + "\" zap-name=\"" + name + "\"/>\n");
 				sb.append("</td>");
 				sb.append("</tr>\n");

@@ -72,6 +72,9 @@
 // ZAP: 2017/06/07 Allow to persist the session properties (e.g. name, description).
 // ZAP: 2017/09/03 Cope with Java 9 change to TreeNode.children().
 // ZAP: 2017/10/11 Make contextsChangedListeners static.
+// ZAP: 2018/01/25 Do not save session file if not file based.
+// ZAP: 2018/02/14 Remove unnecessary boxing / unboxing
+// ZAP: 2018/07/09 No longer need cast on SiteMap.getRoot
 
 package org.parosproxy.paros.model;
 
@@ -326,7 +329,7 @@ public class Session {
 	    
 		for (int i=0; i<list.size(); i++) {
 			// ZAP: Removed unnecessary cast.
-			int historyId = list.get(i).intValue();
+			int historyId = list.get(i);
 
 			try {
 				historyRef = new HistoryReference(historyId);
@@ -370,7 +373,7 @@ public class Session {
 		
 		for (int i=0; i<list.size(); i++) {
 			// ZAP: Removed unnecessary cast.
-			int historyId = list.get(i).intValue();
+			int historyId = list.get(i);
 
 			try {
 				historyRef = new HistoryReference(historyId);
@@ -561,7 +564,7 @@ public class Session {
 		
     	if (! Constant.isLowMemoryOptionSet()) {
 			synchronized (siteTree) {
-			    saveSiteTree((SiteNode) siteTree.getRoot());
+			    saveSiteTree(siteTree.getRoot());
 			}
     	}
 		
@@ -583,7 +586,9 @@ public class Session {
 			return;
 		}
 
-		configuration.save(new File(fileName));
+		if (Database.DB_TYPE_HSQLDB.equals(model.getDb().getType())) {
+			configuration.save(new File(fileName));
+		}
 		model.getDb().getTableSession().update(getSessionId(), getSessionName());
 	}
 	
@@ -737,14 +742,14 @@ public class Session {
     	}
 
         if (EventQueue.isDispatchThread()) {
-        	refreshScope((SiteNode) siteTree.getRoot());
+        	refreshScope(siteTree.getRoot());
         	Control.getSingleton().sessionScopeChanged();
         } else {
             try {
                 EventQueue.invokeLater(new Runnable() {
                     @Override
                     public void run() {
-                    	refreshScope((SiteNode) siteTree.getRoot());
+                    	refreshScope(siteTree.getRoot());
                     	Control.getSingleton().sessionScopeChanged();
                     }
                 });
@@ -844,7 +849,7 @@ public class Session {
 	 */
 	public List<SiteNode> getNodesInScopeFromSiteTree() {
 		List<SiteNode> nodes = new LinkedList<>();
-		SiteNode rootNode = (SiteNode) getSiteTree().getRoot();
+		SiteNode rootNode = getSiteTree().getRoot();
 		fillNodesInScope(rootNode, nodes);
 		return nodes;
 	}
@@ -859,7 +864,7 @@ public class Session {
 	 */
 	public List<SiteNode> getTopNodesInScopeFromSiteTree() {
 		List<SiteNode> nodes = new LinkedList<>();
-		SiteNode rootNode = (SiteNode) getSiteTree().getRoot();
+		SiteNode rootNode = getSiteTree().getRoot();
 		@SuppressWarnings("unchecked")
 		Enumeration<TreeNode> en = rootNode.children();
 		while (en.hasMoreElements()) {
@@ -913,7 +918,7 @@ public class Session {
 	 */
 	public List<SiteNode> getNodesInContextFromSiteTree(Context context) {
 		List<SiteNode> nodes = new LinkedList<>();
-		SiteNode rootNode = (SiteNode) getSiteTree().getRoot();
+		SiteNode rootNode = getSiteTree().getRoot();
 		fillNodesInContext(rootNode, nodes, context);
 		return nodes;
 	}

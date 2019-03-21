@@ -22,11 +22,13 @@ package org.zaproxy.zap;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.Socket;
+import java.util.Locale;
 
 import org.apache.commons.httpclient.Header;
 import org.apache.commons.httpclient.HttpConnection;
 import org.apache.commons.httpclient.HttpException;
 import org.apache.commons.httpclient.HttpState;
+import org.apache.commons.httpclient.methods.EntityEnclosingMethod;
 import org.apache.commons.httpclient.methods.GetMethod;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -41,7 +43,7 @@ import org.zaproxy.zap.network.ZapHttpParser;
  * Malformed HTTP response header lines are ignored.
  * </p>
  */
-public class ZapGetMethod extends GetMethod {
+public class ZapGetMethod extends EntityEnclosingMethod {
     private static final Log LOG = LogFactory.getLog(ZapGetMethod.class);
     
     /**
@@ -56,6 +58,8 @@ public class ZapGetMethod extends GetMethod {
 	 */
 	private InputStream inputStream;
     
+	private boolean followRedirects = true;
+
 	/**
 	 * Constructor.
 	 */
@@ -70,6 +74,30 @@ public class ZapGetMethod extends GetMethod {
 	 */
 	public ZapGetMethod(String uri) {
 		super(uri);
+	}
+
+	@Override
+	public String getName() {
+		return "GET";
+	}
+
+	@Override
+	public void setFollowRedirects(boolean followRedirects) {
+		this.followRedirects = followRedirects;
+	}
+
+	@Override
+	public boolean getFollowRedirects() {
+		return followRedirects;
+	}
+
+	@Override
+	protected void addContentLengthRequestHeader(HttpState state, HttpConnection conn) throws IOException, HttpException {
+		if (getRequestContentLength() == 0) {
+			// Don't add the header with 0 length, not everything accepts it.
+			return;
+		}
+		super.addContentLengthRequestHeader(state, conn);
 	}
 
 	/**
@@ -126,6 +154,22 @@ public class ZapGetMethod extends GetMethod {
 		}
     }
 
+	/**
+	 * Set the upgraded socket
+	 * @param upgradedSocket
+	 */
+    public void setUpgradedSocket(Socket upgradedSocket) {
+        this.upgradedSocket = upgradedSocket;
+    }
+
+    /**
+     * Set the upgraded input stream
+     * @param inputStream
+     */
+    public void setUpgradedInputStream(InputStream inputStream) {
+        this.inputStream = inputStream;
+    }
+
     /**
 	 * If this response included the header <em>Connection: Upgrade</em>, then
 	 * this method provides the corresponding connection.
@@ -159,7 +203,7 @@ public class ZapGetMethod extends GetMethod {
 		Header header = getResponseHeader("content-type");
 		if (header != null) {
 			String contentTypeHeader = header.getValue();
-			if (contentTypeHeader != null && contentTypeHeader.equals("text/event-stream")) {
+			if (contentTypeHeader != null && contentTypeHeader.toLowerCase(Locale.ROOT).contains("text/event-stream")) {
 				return;
 			}
 		}

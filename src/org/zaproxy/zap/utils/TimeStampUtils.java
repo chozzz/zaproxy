@@ -32,7 +32,7 @@ import org.parosproxy.paros.Constant;
 
 public final class TimeStampUtils {
      
-	private static final String DEFAULT_TIME_STAMP_FORMAT =  Constant.messages.getString("timestamp.format.default");
+	private static final String DEFAULT_TIME_STAMP_FORMAT =  Constant.messages.getString("timestamp.format.datetime");
 	private static final String TIME_STAMP_DELIMITER =  Constant.messages.getString("timestamp.format.delimiter");
 	private static final String SAFE_TIME_STAMP_FORMAT = "yyyy-MM-dd HH:mm:ss"; // Just in-case something goes wrong in translation
     
@@ -51,12 +51,10 @@ public final class TimeStampUtils {
 	public static String currentDefaultFormattedTimeStamp() {
 		try {
 			SimpleDateFormat sdf = new SimpleDateFormat(DEFAULT_TIME_STAMP_FORMAT);
-			final String formattedTimeStamp = sdf.format(new Date());
-			return formattedTimeStamp;
+			return sdf.format(new Date());
 		} catch (IllegalArgumentException e) {
 			SimpleDateFormat sdf = new SimpleDateFormat(SAFE_TIME_STAMP_FORMAT);
-			final String formattedTimeStamp = sdf.format(new Date());
-			return formattedTimeStamp;
+			return sdf.format(new Date());
 		}
 	}
 	
@@ -72,8 +70,7 @@ public final class TimeStampUtils {
 	public static String currentFormattedTimeStamp(String format) {
 		try {
 			SimpleDateFormat sdf = new SimpleDateFormat(format);
-			final String formattedTimeStamp = sdf.format(new Date());
-			return formattedTimeStamp; 
+			return sdf.format(new Date());
 		} catch (IllegalArgumentException | NullPointerException e) {
 			return(TimeStampUtils.currentDefaultFormattedTimeStamp());  
 		} 

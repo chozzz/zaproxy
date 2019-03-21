@@ -21,11 +21,9 @@ package org.zaproxy.zap.extension.brk;
 
 import java.awt.Component;
 import java.awt.EventQueue;
-import java.awt.Toolkit;
 import java.awt.event.KeyEvent;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.security.InvalidParameterException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -34,7 +32,6 @@ import java.util.Map;
 
 import javax.swing.JList;
 import javax.swing.JTree;
-import javax.swing.KeyStroke;
 import javax.swing.tree.TreePath;
 
 import org.apache.log4j.Logger;
@@ -51,7 +48,6 @@ import org.parosproxy.paros.model.OptionsParam;
 import org.parosproxy.paros.model.Session;
 import org.parosproxy.paros.model.SiteNode;
 import org.parosproxy.paros.view.View;
-import org.zaproxy.zap.extension.api.API;
 import org.zaproxy.zap.extension.brk.impl.http.HttpBreakpointManagementDaemonImpl;
 import org.zaproxy.zap.extension.brk.impl.http.HttpBreakpointMessage;
 import org.zaproxy.zap.extension.brk.impl.http.HttpBreakpointMessage.Location;
@@ -140,7 +136,7 @@ public class ExtensionBreak extends ExtensionAdaptor implements SessionChangedLi
         extensionHook.addSessionListener(this);
         extensionHook.addOptionsChangedListener(this);
 
-        API.getInstance().registerApiImplementor(api);
+        extensionHook.addApiImplementor(api);
 	    
 	    if (getView() != null) {
 	        breakPanel = new BreakPanel(this, getOptionsParam());
@@ -226,12 +222,18 @@ public class ExtensionBreak extends ExtensionAdaptor implements SessionChangedLi
     }
     
     public void addBreakpointsUiManager(BreakpointsUiManagerInterface uiManager) {
+        if (getView() == null) {
+            return;
+        }
         mapBreakpointUiManager.put(uiManager.getBreakpointClass(), uiManager);
         mapMessageUiManager.put(uiManager.getMessageClass(), uiManager);
     }
 
 
 	public void removeBreakpointsUiManager(BreakpointsUiManagerInterface uiManager) {
+        if (getView() == null) {
+            return;
+        }
         mapBreakpointUiManager.remove(uiManager.getBreakpointClass());
         mapMessageUiManager.remove(uiManager.getMessageClass());		
 	}
@@ -245,42 +247,28 @@ public class ExtensionBreak extends ExtensionAdaptor implements SessionChangedLi
 	}
 
 	public void addHttpBreakpoint(String string, String location, String match, boolean inverse, boolean ignoreCase) {
-		Location loc;
-		Match mtch;
-		
-		try {
-			loc = Location.valueOf(location);
-		} catch (Exception e) {
-			throw new InvalidParameterException("location must be one of " + Arrays.toString(Location.values()));
-		}
-		
-		try {
-			mtch = Match.valueOf(match);
-		} catch (Exception e) {
-			throw new InvalidParameterException("match must be one of " + Arrays.toString(Match.values()));
-		}
-		
-		this.addBreakpoint(new HttpBreakpointMessage(string, loc, mtch, inverse, ignoreCase));
+		this.addBreakpoint(new HttpBreakpointMessage(string, getLocationEnum(location), getMatchEnum(match), inverse, ignoreCase));
 		
 	}
 
+    private static Location getLocationEnum(String location) {
+        try {
+            return Location.valueOf(location);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("location must be one of " + Arrays.toString(Location.values()));
+        }
+    }
+
+    private static Match getMatchEnum(String match) {
+        try {
+            return Match.valueOf(match);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("match must be one of " + Arrays.toString(Match.values()));
+        }
+    }
+
 	public void removeHttpBreakpoint(String string, String location, String match, boolean inverse, boolean ignoreCase) {
-		Location loc;
-		Match mtch;
-		
-		try {
-			loc = Location.valueOf(location);
-		} catch (Exception e) {
-			throw new InvalidParameterException("location must be one of " + Arrays.toString(Location.values()));
-		}
-		
-		try {
-			mtch = Match.valueOf(match);
-		} catch (Exception e) {
-			throw new InvalidParameterException("match must be one of " + Arrays.toString(Match.values()));
-		}
-		
-		this.removeBreakpoint(new HttpBreakpointMessage(string, loc, mtch, inverse, ignoreCase));
+		this.removeBreakpoint(new HttpBreakpointMessage(string, getLocationEnum(location), getMatchEnum(match), inverse, ignoreCase));
 		
 	}
 
@@ -354,7 +342,7 @@ public class ExtensionBreak extends ExtensionAdaptor implements SessionChangedLi
     private ZapMenuItem getMenuToggleBreakOnRequests() {
         if (menuBreakOnRequests == null) {
             menuBreakOnRequests = new ZapMenuItem("menu.tools.brk.req",
-            		KeyStroke.getKeyStroke(KeyEvent.VK_B, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask(), false));
+            		getView().getMenuShortcutKeyStroke(KeyEvent.VK_B, 0, false));
             menuBreakOnRequests.addActionListener(new java.awt.event.ActionListener() {
                 @Override
                 public void actionPerformed(java.awt.event.ActionEvent e) {
@@ -374,7 +362,7 @@ public class ExtensionBreak extends ExtensionAdaptor implements SessionChangedLi
     private ZapMenuItem getMenuToggleBreakOnResponses() {
         if (menuBreakOnResponses == null) {
             menuBreakOnResponses = new ZapMenuItem("menu.tools.brk.resp",
-            		KeyStroke.getKeyStroke(KeyEvent.VK_B, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask() | KeyEvent.ALT_DOWN_MASK, false));
+            		getView().getMenuShortcutKeyStroke(KeyEvent.VK_B, KeyEvent.ALT_DOWN_MASK, false));
             menuBreakOnResponses.addActionListener(new java.awt.event.ActionListener() {
                 @Override
                 public void actionPerformed(java.awt.event.ActionEvent e) {
@@ -394,7 +382,7 @@ public class ExtensionBreak extends ExtensionAdaptor implements SessionChangedLi
     private ZapMenuItem getMenuStep() {
         if (menuStep == null) {
             menuStep = new ZapMenuItem("menu.tools.brk.step",
-            		KeyStroke.getKeyStroke(KeyEvent.VK_S, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask(), false));
+            		getView().getMenuShortcutKeyStroke(KeyEvent.VK_S, 0, false));
             menuStep.addActionListener(new java.awt.event.ActionListener() {
                 @Override
                 public void actionPerformed(java.awt.event.ActionEvent e) {
@@ -411,7 +399,7 @@ public class ExtensionBreak extends ExtensionAdaptor implements SessionChangedLi
     private ZapMenuItem getMenuContinue() {
         if (menuContinue == null) {
             menuContinue = new ZapMenuItem("menu.tools.brk.cont",
-            		KeyStroke.getKeyStroke(KeyEvent.VK_C, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask(), false));
+            		getView().getMenuShortcutKeyStroke(KeyEvent.VK_C, 0, false));
             menuContinue.addActionListener(new java.awt.event.ActionListener() {
                 @Override
                 public void actionPerformed(java.awt.event.ActionEvent e) {
@@ -428,7 +416,7 @@ public class ExtensionBreak extends ExtensionAdaptor implements SessionChangedLi
     private ZapMenuItem getMenuDrop() {
         if (menuDrop == null) {
             menuDrop = new ZapMenuItem("menu.tools.brk.drop",
-            		KeyStroke.getKeyStroke(KeyEvent.VK_X, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask(), false));
+            		getView().getMenuShortcutKeyStroke(KeyEvent.VK_X, 0, false));
             menuDrop.addActionListener(new java.awt.event.ActionListener() {
                 @Override
                 public void actionPerformed(java.awt.event.ActionEvent e) {
@@ -445,7 +433,7 @@ public class ExtensionBreak extends ExtensionAdaptor implements SessionChangedLi
     private ZapMenuItem getMenuAddHttpBreakpoint() {
         if (menuHttpBreakpoint == null) {
         	menuHttpBreakpoint = new ZapMenuItem("menu.tools.brk.custom",
-            		KeyStroke.getKeyStroke(KeyEvent.VK_A, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask(), false));
+            		getView().getMenuShortcutKeyStroke(KeyEvent.VK_A, 0, false));
         	menuHttpBreakpoint.addActionListener(new java.awt.event.ActionListener() {
                 @Override
                 public void actionPerformed(java.awt.event.ActionEvent e) {

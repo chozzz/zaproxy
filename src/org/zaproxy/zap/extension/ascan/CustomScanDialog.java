@@ -73,6 +73,7 @@ import org.zaproxy.zap.model.Context;
 import org.zaproxy.zap.model.StructuralNode;
 import org.zaproxy.zap.model.StructuralSiteNode;
 import org.zaproxy.zap.model.Target;
+import org.zaproxy.zap.model.TechSet;
 import org.zaproxy.zap.users.User;
 import org.zaproxy.zap.utils.ZapTextArea;
 import org.zaproxy.zap.view.LayoutHelper;
@@ -95,8 +96,6 @@ public class CustomScanDialog extends StandardFieldsDialog {
     private static final String FIELD_RECURSE = "ascan.custom.label.recurse";
     private static final String FIELD_ADVANCED = "ascan.custom.label.adv";
     
-    private static final String FIELD_DISABLE_VARIANTS_MSG = "variant.options.disable";
-
     private static final Logger logger = Logger.getLogger(CustomScanDialog.class);
     private static final long serialVersionUID = 1L;
 
@@ -122,6 +121,7 @@ public class CustomScanDialog extends StandardFieldsDialog {
     private final JLabel customPanelStatus = new JLabel();
     private JCheckBox disableNonCustomVectors = null;
     private TechnologyTreePanel techTree;
+    private TechSet techTreeState;
     private String scanPolicyName;
     private ScanPolicy scanPolicy = null;
     private OptionsVariantPanel variantPanel = null;
@@ -154,7 +154,7 @@ public class CustomScanDialog extends StandardFieldsDialog {
 
     public void init(Target target) {
         if (target != null) {
-            // If one isnt specified then leave the previously selected one
+            // If one isn't specified then leave the previously selected one
             this.target = target;
         }
         
@@ -162,6 +162,7 @@ public class CustomScanDialog extends StandardFieldsDialog {
 
         this.removeAllFields();
         this.injectionPointModel.clear();
+        getRequestField().getHighlighter().removeAllHighlights();
         this.headerLength = -1;
         this.urlPathStart = -1;
 
@@ -231,8 +232,7 @@ public class CustomScanDialog extends StandardFieldsDialog {
         // Technology panel
         this.setCustomTabPanel(3, getTechPanel());
 
-        // Policy panel
-        policyPanel.resetAndSetPolicy(scanPolicy.getName());
+        setTechSet(techTreeState);
 
         this.setCustomTabPanel(4, policyPanel);
         
@@ -404,11 +404,16 @@ public class CustomScanDialog extends StandardFieldsDialog {
     private void setTech() {
         Context context = this.getSelectedContext();
 
-        if (context != null) {
-            techTree.setTechSet(context.getTechSet());
+        setTechSet(context != null ? context.getTechSet() : null);
+    }
+
+    private void setTechSet(TechSet techSet) {
+        if (techSet != null) {
+            techTree.setTechSet(techSet);
         } else {
             techTree.reset();
         }
+        techTreeState = techSet;
     }
 
     private ZapTextArea getRequestField() {
@@ -424,6 +429,7 @@ public class CustomScanDialog extends StandardFieldsDialog {
     private OptionsVariantPanel getVariantPanel() {
         if (variantPanel == null) {
             variantPanel = new OptionsVariantPanel();            
+            variantPanel.setReasonVariantsDisabled(Constant.messages.getString("ascan.custom.warn.disabled"));
         }
         
         return variantPanel;
@@ -549,24 +555,8 @@ public class CustomScanDialog extends StandardFieldsDialog {
     private JCheckBox getDisableNonCustomVectors() {
         if (disableNonCustomVectors == null) {
             disableNonCustomVectors = new JCheckBox(Constant.messages.getString("ascan.custom.label.disableiv"));
-            disableNonCustomVectors.addActionListener(new ActionListener() {
-                
-                @Override
-                public void actionPerformed(ActionEvent e) {
-                    // Enable/disable all of the input vector options as appropriate
-                    getVariantPanel().setAllInjectableAndRPC(!disableNonCustomVectors.isSelected());
-
-                    if (disableNonCustomVectors.isSelected()) {
-                        setFieldValue(FIELD_DISABLE_VARIANTS_MSG,
-                                Constant.messages.getString("ascan.custom.warn.disabled"));
-                    
-                    } else {
-                        setFieldValue(FIELD_DISABLE_VARIANTS_MSG, "");
-                    }
-
-                }
-            });
-
+            disableNonCustomVectors
+                    .addActionListener(e -> getVariantPanel().setAllInjectableAndRPC(!disableNonCustomVectors.isSelected()));
         }
         return disableNonCustomVectors;
     }
@@ -689,8 +679,10 @@ public class CustomScanDialog extends StandardFieldsDialog {
 
     private void reset(boolean refreshUi) {
         scannerParam = (ScannerParam) extension.getScannerParam().clone();
+        techTreeState = null;
 
         if (refreshUi) {
+            policyPanel.resetAndSetPolicy(scanPolicyName);
             init(target);
             repaint();
         }
@@ -724,6 +716,8 @@ public class CustomScanDialog extends StandardFieldsDialog {
     @Override
     public void save() {
         List<Object> contextSpecificObjects = new ArrayList<Object>();
+
+        techTreeState = getTechTree().getTechSet();
 
         if (!this.getBoolValue(FIELD_ADVANCED)) {
             contextSpecificObjects.add(scanPolicy);
@@ -780,7 +774,7 @@ public class CustomScanDialog extends StandardFieldsDialog {
 
 
             contextSpecificObjects.add(scannerParam);
-            contextSpecificObjects.add(getTechTree().getTechSet());
+            contextSpecificObjects.add(techTreeState);
             
             if (this.customPanels != null) {
             	for (CustomScanPanel customPanel : this.customPanels) {

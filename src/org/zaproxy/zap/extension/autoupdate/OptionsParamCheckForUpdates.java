@@ -28,7 +28,6 @@ import java.util.Date;
 import java.util.List;
 
 import org.apache.commons.configuration.ConfigurationException;
-import org.apache.commons.configuration.ConversionException;
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.common.AbstractParam;
@@ -52,9 +51,9 @@ public class OptionsParamCheckForUpdates extends AbstractParam {
 
 	private static String SDF_FORMAT = "yyyy-MM-dd";
 
-	private boolean checkOnStart;
+	private boolean checkOnStart = true;
 	private boolean downloadNewRelease = false;
-	private boolean checkAddonUpdates;
+	private boolean checkAddonUpdates = true;
 	private boolean installAddonUpdates = false;
 	private boolean installScannerRules = false;
 	private boolean reportReleaseAddons = false;
@@ -74,8 +73,6 @@ public class OptionsParamCheckForUpdates extends AbstractParam {
 
     @Override
     protected void parse() {
-        updateOldOptions();
-        
 	    checkOnStart = getBoolean(CHECK_ON_START, true);
 	    dayLastChecked = getString(DAY_LAST_CHECKED, "");
 	    dayLastInstallWarned = getString(DAY_LAST_INSTALL_WARNED, "");
@@ -103,15 +100,6 @@ public class OptionsParamCheckForUpdates extends AbstractParam {
 		setDownloadDirectory(new File(getString(DOWNLOAD_DIR, Constant.FOLDER_LOCAL_PLUGIN)), false);
     }
 
-	private void updateOldOptions() {
-		try {
-			int oldValue = getConfig().getInt(CHECK_ON_START, 0);
-			getConfig().setProperty(CHECK_ON_START, Boolean.valueOf(oldValue != 0));
-		} catch(ConversionException ignore) {
-			// Option already using boolean type.
-		}
-	}
-
 	/**
 	 * Sets whether or not the "check for updates on start up" is enabled.
 	 * 
@@ -119,7 +107,7 @@ public class OptionsParamCheckForUpdates extends AbstractParam {
 	 */
 	public void setCheckOnStart(boolean checkOnStart) {
 		this.checkOnStart = checkOnStart;
-		getConfig().setProperty(CHECK_ON_START, Boolean.valueOf(checkOnStart));
+		getConfig().setProperty(CHECK_ON_START, checkOnStart);
 		if (dayLastChecked.length() == 0) {
 			dayLastChecked = "Never";
 			getConfig().setProperty(DAY_LAST_CHECKED, dayLastChecked);

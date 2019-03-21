@@ -47,10 +47,14 @@
 // ZAP: 2016/05/31 Implement hashCode()
 // ZAP: 2017/02/01 Set whether or not the charset should be determined when setting a (String) response.
 // ZAP: 2017/08/23 queryEquals correct comparison and add JavaDoc. equalType update JavaDoc.
+// ZAP: 2018/03/13 Added toEventData()
+// ZAP: 2018/04/04 Add a copy constructor.
+// ZAP: 2018/08/10 Use non-deprecated HttpRequestHeader constructor (Issue 4846).
 
 package org.parosproxy.paros.network;
 
 import java.net.HttpCookie;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
@@ -67,6 +71,7 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.model.HistoryReference;
 import org.parosproxy.paros.model.Model;
+import org.zaproxy.zap.eventBus.Event;
 import org.zaproxy.zap.extension.httppanel.Message;
 import org.zaproxy.zap.extension.httpsessions.HttpSession;
 import org.zaproxy.zap.network.HttpRequestBody;
@@ -79,6 +84,14 @@ import org.zaproxy.zap.users.User;
  * 
  */
 public class HttpMessage implements Message {
+
+    public static final String EVENT_DATA_URI = "uri";
+    public static final String EVENT_DATA_REQUEST_HEADER = "requestHeader";
+    public static final String EVENT_DATA_REQUEST_BODY = "requestBody";
+    public static final String EVENT_DATA_RESPONSE_HEADER = "responseHeader";
+    public static final String EVENT_DATA_RESPONSE_BODY = "responseBody";
+    
+    public static final String MESSAGE_TYPE = "HTTP";
 
 	private HttpRequestHeader mReqHeader = new HttpRequestHeader();
 	private HttpRequestBody mReqBody = new HttpRequestBody();
@@ -142,12 +155,46 @@ public class HttpMessage implements Message {
 	public HttpMessage() {
 	}
 
+	/**
+	 * Constructs a {@code HttpMessage} with a HTTP/1.1 GET request to the given URI.
+	 * <p>
+	 * The following headers are automatically added:
+	 * <ul>
+	 * <li>{@code Host}, with the domain and port from the given URI.</li>
+	 * <li>{@code User-Agent}, using the {@link HttpRequestHeader#getDefaultUserAgent()}.</li>
+	 * <li>{@code Pragma: no-cache}</li>
+	 * <li>{@code Cache-Control: no-cache}, if version is HTTP/1.1</li>
+	 * <li>{@code Content-Type: application/x-www-form-urlencoded}, if the method is POST or PUT.</li>
+	 * </ul>
+	 *
+	 * @param uri the request target.
+	 * @throws HttpMalformedHeaderException if the resulting HTTP header is malformed.
+	 */
 	public HttpMessage(URI uri) throws HttpMalformedHeaderException {
-		this(uri, null);
+		setRequestHeader(new HttpRequestHeader(HttpRequestHeader.GET, uri, HttpHeader.HTTP11));
 	}
 	
+	/**
+	 * Constructs a {@code HttpMessage} with a HTTP/1.1 GET request to the given URI.
+	 * <p>
+	 * The following headers are automatically added:
+	 * <ul>
+	 * <li>{@code Host}, with the domain and port from the given URI.</li>
+	 * <li>{@code User-Agent}, using the {@link HttpRequestHeader#getDefaultUserAgent()}.</li>
+	 * <li>{@code Pragma: no-cache}</li>
+	 * <li>{@code Cache-Control: no-cache}, if version is HTTP/1.1</li>
+	 * <li>{@code Content-Type: application/x-www-form-urlencoded}, if the method is POST or PUT.</li>
+	 * </ul>
+	 *
+	 * @param uri the request target.
+	 * @param params unused.
+	 * @throws HttpMalformedHeaderException if the resulting HTTP header is malformed.
+	 * @deprecated (TODO add version) Use {@link #HttpMessage(URI)} instead.
+	 * @since 2.4.2
+	 */
+	@Deprecated
 	public HttpMessage(URI uri, ConnectionParam params) throws HttpMalformedHeaderException {
-	    setRequestHeader(new HttpRequestHeader(HttpRequestHeader.GET, uri, HttpHeader.HTTP11, params));
+		this(uri);
 	}
 
 	/**
@@ -195,6 +242,39 @@ public class HttpMessage implements Message {
 		    setResponseHeader(resHeader);
 		    setResponseBody(resBody);
 		}
+	}
+
+	/**
+	 * Constructs a {@code HttpMessage} from the given message.
+	 * <p>
+	 * All the {@code HttpMessage} state is copied, except for the following which are the same:
+	 * <ul>
+	 * <li>{@link #getUserObject()}</li>
+	 * <li>{@link #getHistoryRef()}</li>
+	 * <li>{@link #getHttpSession()}</li>
+	 * <li>{@link #getRequestingUser()}</li>
+	 * </ul>
+	 *
+	 * @param message the message to copy.
+	 * @since TODO add version
+	 */
+	public HttpMessage(HttpMessage message) {
+		if (message == null) {
+			throw new IllegalArgumentException("The parameter message must not be null.");
+		}
+
+		message.copyRequestInto(this);
+		message.copyResponseInto(this);
+
+		setUserObject(message.getUserObject());
+		setTimeSentMillis(message.getTimeSentMillis());
+		setTimeElapsedMillis(message.getTimeElapsedMillis());
+		setNote(message.getNote());
+		setHistoryRef(message.getHistoryRef());
+		setHttpSession(message.getHttpSession());
+		setRequestingUser(message.getRequestingUser());
+		setForceIntercept(message.isForceIntercept());
+		setResponseFromTargetHost(message.isResponseFromTargetHost());
 	}
 
 	/**
@@ -673,9 +753,21 @@ public class HttpMessage implements Message {
         this.userObject = userObject;
     }
     
+    /**
+     * Clones this message.
+     * <p>
+     * It returns a new {@code HttpMessage} with a copy of the request/response headers and bodies, no other state is copied.
+     *
+     * @return a new {@code HttpMessage} with the same (contents) request/response headers and bodies as this one.
+     * @see #HttpMessage(HttpMessage)
+     */
     public HttpMessage cloneAll() {
         HttpMessage newMsg = cloneRequest();
-        
+        copyResponseInto(newMsg);
+        return newMsg;
+    }
+
+    private void copyResponseInto(HttpMessage newMsg) {
         if (!this.getResponseHeader().isEmpty()) {
             try {
                 newMsg.getResponseHeader().setMessage(this.getResponseHeader().toString());
@@ -683,12 +775,23 @@ public class HttpMessage implements Message {
             }
             newMsg.setResponseBody(this.getResponseBody().getBytes());
         }
-
-        return newMsg;
     }
     
+    /**
+     * Clones the request of this message.
+     * <p>
+     * It returns a new {@code HttpMessage} with a copy of the request header and body, no other state is copied.
+     *
+     * @return a new {@code HttpMessage} with the same (contents) request header and body as this one.
+     * @see #HttpMessage(HttpMessage)
+     */
     public HttpMessage cloneRequest() {
         HttpMessage newMsg = new HttpMessage();
+        copyRequestInto(newMsg);
+        return newMsg;
+    }
+
+    private void copyRequestInto(HttpMessage newMsg) {
         if (!this.getRequestHeader().isEmpty()) {
             try {
                 newMsg.getRequestHeader().setMessage(this.getRequestHeader().toString());
@@ -697,7 +800,6 @@ public class HttpMessage implements Message {
             }
             newMsg.setRequestBody(this.getRequestBody().getBytes());
         }
-        return newMsg;
     }
     /**
      * @return Get the elapsed time (time difference) between the request is sent and all response is received.  In millis.
@@ -880,11 +982,7 @@ public class HttpMessage implements Message {
 	public boolean isEventStream() {
 		boolean isEventStream = false;
 		if (!getResponseHeader().isEmpty()) {
-			String contentTypeHeader = getResponseHeader().getHeader("content-type");
-			if (contentTypeHeader != null && contentTypeHeader.equals("text/event-stream")) {
-				// response is an SSE stream
-				isEventStream = true;
-			}
+			isEventStream = getResponseHeader().hasContentType("text/event-stream");
 		} else {
 			// response not available
 			// is request for event-stream?
@@ -957,5 +1055,30 @@ public class HttpMessage implements Message {
      */
     public void setResponseFromTargetHost(final boolean responseFromTargetHost) {
         this.responseFromTargetHost = responseFromTargetHost;
+    }
+    
+    /**
+     * Returns a map of data suitable for including in an {@link Event}
+     * @since TODO add version
+     */
+    @Override
+    public Map<String, String> toEventData() { 
+        Map<String, String> map = new HashMap<String, String>();
+        map.put(EVENT_DATA_URI, getRequestHeader().getURI().toString());
+        map.put(EVENT_DATA_REQUEST_HEADER, getRequestHeader().toString());
+        map.put(EVENT_DATA_REQUEST_BODY, getRequestBody().toString());
+        if (! getResponseHeader().isEmpty()) {
+            map.put(EVENT_DATA_RESPONSE_HEADER, getResponseHeader().toString());
+            map.put(EVENT_DATA_RESPONSE_BODY, getResponseBody().toString());
+        }
+        return map;
+    }
+    
+    /**
+     * Returns "HTTP"
+     * @since TODO add version
+     */
+    public String getType() {
+        return MESSAGE_TYPE;
     }
 }

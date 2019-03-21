@@ -27,6 +27,7 @@ import net.sf.json.JSONObject;
 import org.apache.commons.lang.StringEscapeUtils;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
+import org.zaproxy.zap.utils.JsonUtil;
 
 public class ApiResponseList extends ApiResponse {
 	
@@ -72,14 +73,18 @@ public class ApiResponseList extends ApiResponse {
 		}
 		JSONObject jo = new JSONObject();
 		JSONArray array = new JSONArray();
+		// Add the array in place to prevent auto conversion 
+		jo.put(getName(), array);
 		for (ApiResponse resp: this.list) {
 			if (resp instanceof ApiResponseElement) {
-				array.add(((ApiResponseElement)resp).getValue());
+				String value = ((ApiResponseElement)resp).getValue();
+				value = JsonUtil.getJsonFriendlyString(value);
+				jo.getJSONArray(getName()).add(value);
 			} else {
-				array.add(resp.toJSON());
+				// toString() is required to prevent auto conversion of text values to JSON
+				jo.getJSONArray(getName()).add(resp.toJSON().toString());
 			}
 		}
-		jo.put(getName(), array);
 		return jo;
 	}
 

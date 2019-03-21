@@ -82,9 +82,11 @@ public class JCheckBoxTree extends JTree {
 
     void fireCheckChangeEvent(CheckChangeEvent evt) {
         Object[] listeners = listenerList.getListenerList();
-        for (int i = 0; i < listeners.length; i++) {
+        // Note that the listeners list contains "pair of entries", 
+        // the first is the class and the following the instance
+        for (int i = 0; i < listeners.length-1; i += 2) {
             if (listeners[i] == CheckChangeEventListener.class) {
-                ((CheckChangeEventListener) listeners[i + 1]).checkStateChanged(evt);
+                ((CheckChangeEventListener) listeners[i+1]).checkStateChanged(evt);
             }
         }
     }
@@ -167,7 +169,7 @@ public class JCheckBoxTree extends JTree {
 	            checkBox.setOpaque(cn.isSelected && cn.hasChildren && ! cn.allChildrenSelected);
 	        	checkBox.setVisible(true);
 	        	checkBox.setEnabled(true);
-	        	/* Looks ok, but doesnt work correctly
+	        	/* Looks ok, but doesn't work correctly
 	            if (cn.isSelected && cn.hasChildren && ! cn.allChildrenSelected) {
 	                checkBox.getModel().setPressed(true);
 	                checkBox.getModel().setArmed(true);

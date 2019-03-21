@@ -94,6 +94,9 @@ final class AddOnLoaderUtils {
         } catch (ClassNotFoundException e) {
             LOGGER.error("Declared \"" + type + "\" was not found: " + classname, e);
             return null;
+        } catch (LinkageError e) {
+            LOGGER.error("Declared \"" + type + "\" could not be loaded: " + classname, e);
+            return null;
         }
 
         if (Modifier.isAbstract(cls.getModifiers()) || Modifier.isInterface(cls.getModifiers())) {
@@ -109,9 +112,8 @@ final class AddOnLoaderUtils {
         try {
             @SuppressWarnings("unchecked")
             Constructor<T> c = (Constructor<T>) cls.getConstructor();
-            T instance = c.newInstance();
-            return instance;
-        } catch (Exception e) {
+            return c.newInstance();
+        } catch (LinkageError | Exception e) {
             LOGGER.error("Failed to initialise: " + classname, e);
         }
         return null;

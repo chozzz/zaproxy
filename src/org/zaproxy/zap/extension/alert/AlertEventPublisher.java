@@ -41,6 +41,14 @@ public class AlertEventPublisher implements EventPublisher {
 	 * @since 2.5.0
 	 */
 	public static final String HISTORY_REFERENCE_ID = "historyId";
+	public static final String NAME = "name";
+	public static final String URI = "uri";
+	public static final String PARAM = "param";
+	public static final String RISK = "risk";
+	public static final String RISK_STRING = "riskString";
+	public static final String CONFIDENCE = "confidence";
+	public static final String CONFIDENCE_STRING = "confidenceString";
+	public static final String SOURCE = "source";
 
 	@Override
 	public String getPublisherName() {
@@ -51,7 +59,7 @@ public class AlertEventPublisher implements EventPublisher {
 		if (publisher == null) {
 			publisher = new AlertEventPublisher(); 
 	        ZAP.getEventBus().registerPublisher(publisher, 
-	        		new String[] {ALERT_ADDED_EVENT, ALERT_CHANGED_EVENT, ALERT_REMOVED_EVENT, ALL_ALERTS_REMOVED_EVENT});
+	        		ALERT_ADDED_EVENT, ALERT_CHANGED_EVENT, ALERT_REMOVED_EVENT, ALL_ALERTS_REMOVED_EVENT);
 
 		}
 		return publisher;

@@ -23,6 +23,7 @@ import java.awt.Color;
 
 import javax.swing.JTextArea;
 import javax.swing.UIManager;
+import javax.swing.text.DefaultCaret;
 
 /**
  * An alternative to JLabel which disables HTML and supports wrapping.
@@ -51,5 +52,7 @@ public class ZapLabel extends JTextArea {
 		this.setBorder(null);
 		this.setBackground(new Color(UIManager.getLookAndFeel().getDefaults().getColor("Label.background").getRGB()));
 		this.setForeground(new Color(UIManager.getLookAndFeel().getDefaults().getColor("Label.foreground").getRGB()));
+	
+		((DefaultCaret) getCaret()).setUpdatePolicy(DefaultCaret.NEVER_UPDATE);
 	}
 }

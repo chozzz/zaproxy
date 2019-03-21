@@ -19,6 +19,7 @@
  */
 package org.zaproxy.zap.authentication;
 
+import java.util.Map;
 import java.util.regex.Pattern;
 
 import org.apache.commons.httpclient.URIException;
@@ -26,12 +27,16 @@ import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.network.HttpMessage;
 import org.parosproxy.paros.view.View;
 import org.zaproxy.zap.extension.api.ApiResponse;
+import org.zaproxy.zap.extension.api.ApiResponseSet;
 import org.zaproxy.zap.model.Context;
 import org.zaproxy.zap.model.SessionStructure;
 import org.zaproxy.zap.session.SessionManagementMethod;
 import org.zaproxy.zap.session.WebSession;
 import org.zaproxy.zap.users.User;
 import org.zaproxy.zap.utils.Stats;
+
+import net.sf.json.JSON;
+import net.sf.json.JSONObject;
 
 /**
  * The {@code AuthenticationMethod} represents an authentication method that can be used to authenticate an
@@ -300,19 +305,22 @@ public abstract class AuthenticationMethod {
 		if (getClass() != obj.getClass())
 			return false;
 		AuthenticationMethod other = (AuthenticationMethod) obj;
-		if (loggedInIndicatorPattern == null) {
-			if (other.loggedInIndicatorPattern != null)
-				return false;
-		} else if (!loggedInIndicatorPattern.pattern().equals(other.loggedInIndicatorPattern.pattern()))
+		if (!isSamePattern(loggedInIndicatorPattern, other.loggedInIndicatorPattern)) {
 			return false;
-		if (loggedOutIndicatorPattern == null) {
-			if (other.loggedOutIndicatorPattern != null)
-				return false;
-		} else if (!loggedOutIndicatorPattern.pattern().equals(other.loggedOutIndicatorPattern.pattern()))
+		}
+		if (!isSamePattern(loggedOutIndicatorPattern, other.loggedOutIndicatorPattern)) {
 			return false;
+		}
 		return true;
 	}
 
+	private static boolean isSamePattern(Pattern pattern, Pattern other) {
+		if (pattern == null) {
+			return other == null;
+		}
+		return other != null && pattern.pattern().equals(other.pattern());
+	}
+	
 	/**
 	 * Thrown when an unsupported type of credentials is used with a {@link AuthenticationMethod} .
 	 */
@@ -331,4 +339,17 @@ public abstract class AuthenticationMethod {
 		}
 	}
 
+    static class AuthMethodApiResponseRepresentation<T> extends ApiResponseSet<T> {
+
+        public AuthMethodApiResponseRepresentation(Map<String, T> values) {
+            super("method", values);
+        }
+
+        @Override
+        public JSON toJSON() {
+            JSONObject response = new JSONObject();
+            response.put(getName(), super.toJSON());
+            return response;
+        }
+    }
 }

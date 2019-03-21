@@ -20,26 +20,17 @@
 package org.zaproxy.zap.control;
 
 import java.io.File;
-import java.io.InputStream;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.MissingResourceException;
 import java.util.ResourceBundle;
 import java.util.TreeMap;
 import java.util.Vector;
-
-import javax.help.HelpBroker;
-import javax.help.HelpSet;
-import javax.help.HelpSetException;
-import javax.help.HelpUtilities;
 
 import org.apache.commons.configuration.Configuration;
 import org.apache.log4j.Logger;
@@ -49,7 +40,7 @@ import org.parosproxy.paros.extension.ExtensionLoader;
 import org.parosproxy.paros.model.Model;
 import org.parosproxy.paros.model.OptionsParam;
 import org.zaproxy.zap.extension.ext.ExtensionParam;
-import org.zaproxy.zap.extension.help.ExtensionHelp;
+import org.zaproxy.zap.utils.ZapResourceBundleControl;
 
 public class ExtensionFactory {
 
@@ -147,7 +138,6 @@ public class ExtensionFactory {
      * @param extension the extension
      * @see #loadMessages(Extension)
      * @see ExtensionLoader#addExtension(Extension)
-     * @see #intitializeHelpSet(Extension)
      */
     private static void loadMessagesAndAddExtension(ExtensionLoader extensionLoader, Extension extension) {
         loadMessages(extension);
@@ -162,11 +152,12 @@ public class ExtensionFactory {
         if (extension.supportsDb(Model.getSingleton().getDb().getType()) &&  
         		(extension.supportsLowMemory() || ! Constant.isLowMemoryOptionSet())) {
             extensionLoader.addExtension(extension);
-            intitializeHelpSet(extension);
         } else if (!extension.supportsDb(Model.getSingleton().getDb().getType())) {
             log.debug("Not loading extension " + extension.getName() + ": doesnt support " + Model.getSingleton().getDb().getType());
+            extension.setEnabled(false);
         } else if (extension.supportsLowMemory() || ! Constant.isLowMemoryOptionSet()) {
             log.debug("Not loading extension " + extension.getName() + ": doesnt support low memory option");
+            extension.setEnabled(false);
         }
     }
 
@@ -288,10 +279,19 @@ public class ExtensionFactory {
     }
 
     private static void loadMessages(Extension ext) {
+        AddOn addOn = ext.getAddOn();
+        if (addOn == null) {
+            // Core extensions use core resource bundle.
+            ext.setMessages(Constant.messages.getCoreResourceBundle());
+            return;
+        }
+
         ResourceBundle msg = getExtensionResourceBundle(ext);
         if (msg != null) {
             ext.setMessages(msg);
             Constant.messages.addMessageBundle(ext.getI18nPrefix(), ext.getMessages());
+        } else if (addOn.getResourceBundle() != null) {
+            ext.setMessages(addOn.getResourceBundle());
         } else {
             ext.setMessages(Constant.messages.getCoreResourceBundle());
         }
@@ -310,7 +310,7 @@ public class ExtensionFactory {
             try {
                 return getPropertiesResourceBundle(oldLocation, classLoader);
             } catch (MissingResourceException ignoreAgain) {
-                // It will be using the standard message bundle
+                // It will be using a fallback message bundle
             }
         }
         return null;
@@ -318,54 +318,7 @@ public class ExtensionFactory {
 
     private static ResourceBundle getPropertiesResourceBundle(String name, ClassLoader classLoader)
             throws MissingResourceException {
-        return ResourceBundle.getBundle(
-                name,
-                Constant.getLocale(),
-                classLoader,
-                ResourceBundle.Control.getControl(ResourceBundle.Control.FORMAT_PROPERTIES));
-    }
-
-    /**
-     * If there are help files within the extension, they are loaded and merged
-     * with existing help files if the core help was correctly loaded.
-     * @param ext the extension being initialised
-     */
-    private static void intitializeHelpSet(Extension ext) {
-        HelpBroker hb = ExtensionHelp.getHelpBroker();
-        if (hb == null) {
-            return;
-        }
-
-        URL helpSetUrl = getExtensionHelpSetUrl(ext);
-        if (helpSetUrl != null) {
-            try {
-                log.debug("Load help files for extension '" + ext.getName() + "' and merge with core help.");
-                HelpSet extHs = new HelpSet(ext.getClass().getClassLoader(), helpSetUrl);
-                hb.getHelpSet().add(extHs);
-            } catch (HelpSetException e) {
-                log.error("An error occured while adding help file of extension '" + ext.getName() + "': " + e.getMessage(), e);
-            }
-        }
-    }
-
-    private static URL getExtensionHelpSetUrl(Extension extension) {
-        String extensionPackage = extension.getClass().getPackage().getName().replace('.', '/') + "/";
-        URL helpSetUrl = findResource(
-                extension.getClass().getClassLoader(),
-                extensionPackage + "resources/help",
-                "helpset",
-                ".hs",
-                Constant.getLocale());
-        if (helpSetUrl == null) {
-            // Search in old location
-            helpSetUrl = findResource(
-                    extension.getClass().getClassLoader(),
-                    extensionPackage + "resource/help",
-                    "helpset",
-                    ".hs",
-                    Constant.getLocale());
-        }
-        return helpSetUrl;
+        return ResourceBundle.getBundle(name, Constant.getLocale(), classLoader, new ZapResourceBundleControl());
     }
 
     public static List<Extension> getAllExtensions() {
@@ -373,11 +326,10 @@ public class ExtensionFactory {
     }
 
     public static Extension getExtension(String name) {
-        Extension test = mapAllExtension.get(name);
-        return test;
+        return mapAllExtension.get(name);
     }
 
-    static void removeAddOnExtension(Extension extension) {
+    public static void unloadAddOnExtension(Extension extension) {
         synchronized (mapAllExtension) {
             unloadMessages(extension);
 
@@ -398,125 +350,10 @@ public class ExtensionFactory {
         }
     }
 
-    public static void unloadAddOnExtension(Extension extension) {
-        synchronized (mapAllExtension) {
-            removeAddOnExtension(extension);
-            unloadHelpSet(extension);
-        }
-    }
-
     private static void unloadMessages(Extension extension) {
         ResourceBundle msg = extension.getMessages();
         if (msg != null) {
             Constant.messages.removeMessageBundle(extension.getI18nPrefix());
         }
-    }
-
-    private static void unloadHelpSet(Extension ext) {
-        HelpBroker hb = ExtensionHelp.getHelpBroker();
-        if (hb == null) {
-            return;
-        }
-
-        URL helpSetUrl = getExtensionHelpSetUrl(ext);
-        if (helpSetUrl != null) {
-            HelpSet baseHelpSet = hb.getHelpSet();
-            Enumeration<?> helpSets = baseHelpSet.getHelpSets();
-            while (helpSets.hasMoreElements()) {
-                HelpSet extensionHelpSet = (HelpSet) helpSets.nextElement();
-                if (helpSetUrl.equals(extensionHelpSet.getHelpSetURL())) {
-                    baseHelpSet.remove(extensionHelpSet);
-                    break;
-                }
-            }
-        }
-    }
-
-    /**
-     * Finds and returns the URL to a resource with the given class loader, or
-     * system class loader if {@code null}, for the given or default locales.
-     * <p>
-     * The resource pathname will be constructed using the parameters package
-     * name, file name, file extension and candidate locales. The candidate
-     * locales are created from the given locale using the method
-     * {@code HelpUtilities#getCandidates(Locale)}.
-     * </p>
-     * <p>
-     * The resource pathname is constructed as:
-     *
-     * <pre>
-     * &quot;package name&quot; + &quot;candidate locale&quot; + '/' + &quot;file name&quot; + &quot;candidate locale&quot; + &quot;file extension&quot;
-     * </pre>
-     *
-     * For example, with the following parameters:
-     * <ul>
-     * <li>package name - /org/zaproxy/zap/extension/example/resources/help</li>
-     * <li>file name - helpset</li>
-     * <li>file extension - .hs</li>
-     * <li>locale - es_ES</li>
-     * </ul>
-     * and default locale "en_GB", it would produce the following resource
-     * pathnames:
-     *
-     * <pre>
-     * /org/zaproxy/zap/extension/example/resources/help_es_ES/helpset_es_ES.hs
-     * /org/zaproxy/zap/extension/example/resources/help_es/helpset_es.hs
-     * /org/zaproxy/zap/extension/example/resources/help/helpset.hs
-     * /org/zaproxy/zap/extension/example/resources/help_en_GB/helpset_en_GB.hs
-     * /org/zaproxy/zap/extension/example/resources/help_en/helpset_en.hs
-     * </pre>
-     *
-     * The URL of the first existent resource is returned.
-     *
-     * @param cl the class loader that will be used to get the resource,
-     * {@code null} the system class loader is used.
-     * @param packageName the name of the package where the resource is
-     * @param fileName the file name of the resource
-     * @param fileExtension the file extension of the resource
-     * @param locale the target locale of the required resource
-     * @return An {@code URL} with the path to the resource or {@code null} if
-     * not found.
-     * @see HelpUtilities#getCandidates(Locale)
-     */
-    // Implementation based (read copied) from:
-    // javax.help.HelpUtilities#getLocalizedResource(ClassLoader cl, String front, String back, Locale locale, boolean tryRead)
-    // Changes:
-    // - Removed the "tryRead" flag since it's not needed (it's set to try to read always);
-    // - Replaced the use of StringBuffer with StringBuilder;
-    // - Renamed parameters "front" to "packageName" and "back" to "name";
-    // - Renamed variable "tail" to "candidateLocale";
-    // - Renamed variable "name" to "resource";
-    // - Added type parameter to "tails" enumeration (now "candidateLocales"), @SuppressWarnings annotation and removed the
-    // String cast;
-    // - Changed to use try-with-resource statement to manage the input stream.
-    // - Changed to also append the "candidateLocale" to the packageName followed by character '/';
-    private static URL findResource(ClassLoader cl, String packageName, String fileName, String fileExtension, Locale locale) {
-        URL url;
-
-        for (@SuppressWarnings("unchecked") Enumeration<String> candidateLocales = HelpUtilities.getCandidates(locale); candidateLocales.hasMoreElements();) {
-            String candidateLocale = candidateLocales.nextElement();
-            String resource = (new StringBuilder(packageName)).append(candidateLocale)
-                    .append('/')
-                    .append(fileName)
-                    .append(candidateLocale)
-                    .append(fileExtension)
-                    .toString();
-            if (cl == null) {
-                url = ClassLoader.getSystemResource(resource);
-            } else {
-                url = cl.getResource(resource);
-            }
-            if (url != null) {
-                // Try doing an actual read to be sure it exists
-                try (InputStream is = url.openConnection().getInputStream()) {
-                    if (is != null && is.read() != -1) {
-                        return url;
-                    }
-                } catch (Throwable t) {
-                    // ignore and continue looking
-                }
-            }
-        }
-        return null;
     }
 }

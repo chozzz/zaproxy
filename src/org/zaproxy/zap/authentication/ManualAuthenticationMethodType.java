@@ -47,7 +47,6 @@ import org.zaproxy.zap.extension.api.ApiDynamicActionImplementor;
 import org.zaproxy.zap.extension.api.ApiException;
 import org.zaproxy.zap.extension.api.ApiException.Type;
 import org.zaproxy.zap.extension.api.ApiResponse;
-import org.zaproxy.zap.extension.api.ApiResponseElement;
 import org.zaproxy.zap.extension.api.ApiResponseSet;
 import org.zaproxy.zap.extension.authentication.AuthenticationAPI;
 import org.zaproxy.zap.extension.httpsessions.ExtensionHttpSessions;
@@ -112,12 +111,17 @@ public class ManualAuthenticationMethodType extends AuthenticationMethodType {
 				throw new UnsupportedAuthenticationCredentialsException(
 						"Manual authentication credentials should be used for Manual authentication.");
 			}
+			ManualAuthenticationCredentials mc = (ManualAuthenticationCredentials) credentials;
+			HttpSession httpSession = mc.getSelectedSession();
+			if (httpSession == null) {
+				return null;
+			}
+
 			// Build a new WebSession based on the values from the HttpSession
 			// TODO: Changes in either the WebSession or the HttpSession are not
 			// visible in the other
-			ManualAuthenticationCredentials mc = (ManualAuthenticationCredentials) credentials;
 			WebSession session = new CookieBasedSessionManagementMethodType.CookieBasedSession();
-			for (Entry<String, Cookie> v : mc.getSelectedSession().getTokenValuesUnmodifiableMap().entrySet()) {
+			for (Entry<String, Cookie> v : httpSession.getTokenValuesUnmodifiableMap().entrySet()) {
 				session.getHttpState().addCookie(v.getValue());
 			}
 			return session;
@@ -145,7 +149,9 @@ public class ManualAuthenticationMethodType extends AuthenticationMethodType {
 
 		@Override
 		public ApiResponse getApiResponseRepresentation() {
-			return new ApiResponseElement("methodName", API_METHOD_NAME);
+			Map<String, String> values = new HashMap<>();
+			values.put("methodName", API_METHOD_NAME);
+			return new AuthMethodApiResponseRepresentation<>(values);
 		}
 
 		@Override
@@ -373,6 +379,11 @@ public class ManualAuthenticationMethodType extends AuthenticationMethodType {
 		return new ManualAuthenticationCredentials();
 	}
 
+	@Override
+	public Class<ManualAuthenticationCredentials> getAuthenticationCredentialsType() {
+		return ManualAuthenticationCredentials.class;
+	}
+
 	public static ManualAuthenticationCredentials createAuthenticationCredentials(HttpSession session) {
 		ManualAuthenticationCredentials c = new ManualAuthenticationCredentials();
 		c.setSelectedSession(session);
@@ -391,9 +402,6 @@ public class ManualAuthenticationMethodType extends AuthenticationMethodType {
 			public void handleAction(JSONObject params) throws ApiException {
 				Context context = ApiUtils.getContextByParamId(params, AuthenticationAPI.PARAM_CONTEXT_ID);
 				ManualAuthenticationMethod method = createAuthenticationMethod(context.getIndex());
-				if (!context.getAuthenticationMethod().isSameType(method)) {
-					apiChangedAuthenticationMethodForContext(context.getIndex());
-				}
 				context.setAuthenticationMethod(method);
 			}
 		};

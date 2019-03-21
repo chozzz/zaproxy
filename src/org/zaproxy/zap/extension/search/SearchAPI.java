@@ -46,6 +46,7 @@ import org.zaproxy.zap.extension.api.ApiView;
 import org.zaproxy.zap.utils.HarUtils;
 
 import edu.umass.cs.benchlab.har.HarEntries;
+import edu.umass.cs.benchlab.har.HarEntry;
 import edu.umass.cs.benchlab.har.HarLog;
 
 public class SearchAPI extends ApiImplementor {
@@ -232,12 +233,9 @@ public class SearchAPI extends ApiImplementor {
 
 		try {
 			final HarEntries entries = new HarEntries();
-			search(params, searchType, new SearchResultsProcessor() {
-
-				@Override
-				public void processRecordHistory(RecordHistory recordHistory) {
-					entries.addEntry(HarUtils.createHarEntry(recordHistory.getHttpMessage()));
-				}
+			search(params, searchType, rh -> {
+				HarEntry entry = HarUtils.createHarEntry(rh.getHistoryId(), rh.getHistoryType(), rh.getHttpMessage());
+				entries.addEntry(entry);
 			});
 
 			HarLog harLog = HarUtils.createZapHarLog();
@@ -288,7 +286,7 @@ public class SearchAPI extends ApiImplementor {
 		TableHistory tableHistory = Model.getSingleton().getDb().getTableHistory();
 		for (Integer hRefId : searchListener.getHistoryReferencesIds()) {
 			try {
-				processor.processRecordHistory(tableHistory.read(hRefId.intValue()));
+				processor.processRecordHistory(tableHistory.read(hRefId));
 			} catch (DatabaseException | HttpMalformedHeaderException e) {
 				log.error(e.getMessage(), e);
 			}
@@ -314,7 +312,7 @@ public class SearchAPI extends ApiImplementor {
 
 		@Override
 		public void addSearchResult(SearchResult sr) {
-			historyReferencesIds.add(Integer.valueOf(sr.getMessage().getHistoryRef().getHistoryId()));
+			historyReferencesIds.add(sr.getMessage().getHistoryRef().getHistoryId());
 		}
 
 		@Override

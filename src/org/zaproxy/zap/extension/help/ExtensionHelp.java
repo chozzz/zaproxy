@@ -20,16 +20,23 @@
 package org.zaproxy.zap.extension.help;
 
 import java.awt.Component;
+import java.awt.EventQueue;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Map.Entry;
+import java.util.function.Function;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.WeakHashMap;
 
 import javax.help.CSH;
 import javax.help.HelpBroker;
 import javax.help.HelpSet;
+import javax.help.HelpSetException;
 import javax.help.SwingHelpUtilities;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
@@ -41,6 +48,7 @@ import javax.swing.UIManager;
 
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.Constant;
+import org.parosproxy.paros.extension.Extension;
 import org.parosproxy.paros.extension.ExtensionAdaptor;
 import org.parosproxy.paros.extension.ExtensionHook;
 import org.parosproxy.paros.extension.ViewDelegate;
@@ -49,6 +57,7 @@ import org.zaproxy.zap.control.AddOn;
 import org.zaproxy.zap.control.ExtensionFactory;
 import org.zaproxy.zap.extension.AddOnInstallationStatusListener;
 import org.zaproxy.zap.utils.DisplayUtils;
+import org.zaproxy.zap.utils.LocaleUtils;
 import org.zaproxy.zap.view.ZapMenuItem;
 
 /**
@@ -66,7 +75,22 @@ public class ExtensionHelp extends ExtensionAdaptor {
 	 */
 	private static final String HELP_ID_PROPERTY = "HelpID";
 
-	private static final String HELP_SET_FILE_NAME = "helpset";
+	/**
+	 * The (default) file name of a HelpSet.
+	 * 
+	 * @see HelpSet
+	 * @since TODO add version
+	 */
+	public static final String HELP_SET_FILE_NAME = "helpset";
+
+	/**
+	 * The file extension of a HelpSet.
+	 * 
+	 * @see HelpSet
+	 * @since TODO add version
+	 */
+	public static final String HELP_SET_FILE_EXTENSION = "hs";
+ 
 	/**
 	 * @deprecated (2.7.0) Use {@link #getHelpIcon()} instead.
 	 */
@@ -107,6 +131,8 @@ public class ExtensionHelp extends ExtensionAdaptor {
 	 * @see #setHelpEnabled(boolean)
 	 */
 	private static WeakHashMap<JComponent, String> componentsWithHelp;
+
+	private static Map<AddOn, List<HelpSet>> addOnHelpSets = new HashMap<>();
 
 	private static final Logger logger = Logger.getLogger(ExtensionHelp.class);
 	
@@ -178,6 +204,8 @@ public class ExtensionHelp extends ExtensionAdaptor {
 		if (enabled && findHelpSetUrl() != null) {
 			createHelpBroker();
 
+			loadAddOnHelpSets(ExtensionFactory.getAddOnLoader().getAddOnCollection().getInstalledAddOns());
+
 			getMenuHelpZapUserGuide().addActionListener(showHelpActionListener);
 			getMenuHelpZapUserGuide().setToolTipText(null);
 			getMenuHelpZapUserGuide().setEnabled(true);
@@ -213,6 +241,84 @@ public class ExtensionHelp extends ExtensionAdaptor {
 			hs = null;
 			showHelpActionListener = null;
 		}
+	}
+
+	private static void loadAddOnHelpSets(List<AddOn> addOns) {
+		addOns.forEach(ExtensionHelp::loadAddOnHelpSet);
+	}
+
+	private static void loadAddOnHelpSet(AddOn addOn) {
+		addOn.getLoadedExtensions().forEach(ExtensionHelp::loadExtensionHelpSet);
+
+		AddOn.HelpSetData helpSetData = addOn.getHelpSetData();
+		if (helpSetData.isEmpty()) {
+			return;
+		}
+
+		ClassLoader classLoader = addOn.getClassLoader();
+		URL helpSetUrl = LocaleUtils.findResource(
+				helpSetData.getBaseName(),
+				HELP_SET_FILE_EXTENSION,
+				helpSetData.getLocaleToken(),
+				Constant.getLocale(),
+				classLoader::getResource);
+		if (helpSetUrl == null) {
+			logger.error(
+					"Declared helpset not found for '" + addOn.getId() + "' add-on, with base name: "
+							+ helpSetData.getBaseName()
+							+ (helpSetData.getLocaleToken().isEmpty()
+									? ""
+									: " and locale token: " + helpSetData.getLocaleToken()));
+			return;
+		}
+
+		try {
+			logger.debug("Loading help for '" + addOn.getId() + "' add-on and merging with core help.");
+			addHelpSet(addOn, new HelpSet(classLoader, helpSetUrl));
+		} catch (HelpSetException e) {
+			logger.error("An error occured while adding help for '" + addOn.getId() + "' add-on:", e);
+		}
+	}
+
+	private static void addHelpSet(AddOn addOn, HelpSet helpSet) {
+		hb.getHelpSet().add(helpSet);
+		addOnHelpSets.computeIfAbsent(addOn, k -> new ArrayList<>()).add(helpSet);
+	}
+
+	private static void loadExtensionHelpSet(Extension ext) {
+		URL helpSetUrl = getExtensionHelpSetUrl(ext);
+		if (helpSetUrl != null) {
+			try {
+				logger.debug("Load help files for extension '" + ext.getName() + "' and merge with core help.");
+				addHelpSet(ext.getAddOn(), new HelpSet(ext.getClass().getClassLoader(), helpSetUrl));
+			} catch (HelpSetException e) {
+				logger.error(
+						"An error occured while adding help file of extension '" + ext.getName() + "': " + e.getMessage(),
+						e);
+			}
+		}
+	}
+
+	private static URL getExtensionHelpSetUrl(Extension extension) {
+		String extensionPackage = extension.getClass().getPackage().getName();
+		String localeToken = "%LC%";
+		Function<String, URL> getResource = extension.getClass().getClassLoader()::getResource;
+		URL helpSetUrl = LocaleUtils.findResource(
+				extensionPackage + ".resources.help" + localeToken + "." + HELP_SET_FILE_NAME,
+				HELP_SET_FILE_EXTENSION,
+				localeToken,
+				Constant.getLocale(),
+				getResource);
+		if (helpSetUrl == null) {
+			// Search in old location
+			helpSetUrl = LocaleUtils.findResource(
+					extensionPackage + ".resource.help" + localeToken + "." + HELP_SET_FILE_NAME,
+					HELP_SET_FILE_EXTENSION,
+					localeToken,
+					Constant.getLocale(),
+					getResource);
+		}
+		return helpSetUrl;
 	}
 
 	/**
@@ -259,7 +365,11 @@ public class ExtensionHelp extends ExtensionAdaptor {
 	 * @see HelpSet
 	 */
 	private static URL findHelpSetUrl() {
-		return HelpSet.findHelpSet(ExtensionFactory.getAddOnLoader(), HELP_SET_FILE_NAME, Constant.getLocale());
+		return LocaleUtils.findResource(
+				HELP_SET_FILE_NAME,
+				HELP_SET_FILE_EXTENSION,
+				Constant.getLocale(),
+				r -> ExtensionFactory.getAddOnLoader().getResource(r));
 	}
 	
 	/**
@@ -377,8 +487,12 @@ public class ExtensionHelp extends ExtensionAdaptor {
 
         @Override
         public void addOnInstalled(AddOn addOn) {
-            if (hb == null && findHelpSetUrl() != null) {
-                setHelpEnabled(true);
+            if (hb == null) {
+                if (findHelpSetUrl() != null) {
+                    setHelpEnabled(true);
+                }
+            } else {
+                loadAddOnHelpSet(addOn);
             }
         }
 
@@ -389,8 +503,17 @@ public class ExtensionHelp extends ExtensionAdaptor {
 
         @Override
         public void addOnUninstalled(AddOn addOn, boolean successfully) {
-            if (hb != null && findHelpSetUrl() == null) {
+            if (hb == null) {
+                return;
+            }
+
+            if (findHelpSetUrl() == null) {
                 setHelpEnabled(false);
+            } else {
+                addOnHelpSets.computeIfPresent(addOn, (k, helpsets) -> {
+                    EventQueue.invokeLater(() -> helpsets.forEach(hb.getHelpSet()::remove));
+                    return null;
+                });
             }
         }
     }

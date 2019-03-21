@@ -27,9 +27,14 @@ import java.nio.charset.Charset;
 import java.nio.charset.MalformedInputException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Map.Entry;
 
+import net.sf.json.JSON;
 import net.sf.json.JSONObject;
 
+import org.parosproxy.paros.Constant;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
 import org.zaproxy.zap.extension.api.ApiAction;
 import org.zaproxy.zap.extension.api.ApiException;
 import org.zaproxy.zap.extension.api.ApiImplementor;
@@ -43,25 +48,43 @@ public class ScriptAPI extends ApiImplementor {
 
 	private static final String PREFIX = "script";
 	private static final String VIEW_ENGINES = "listEngines";
+	private static final String VIEW_TYPES = "listTypes";
+	private static final String VIEW_GLOBAL_VAR = "globalVar";
+	private static final String VIEW_GLOBAL_VARS = "globalVars";
 	private static final String VIEW_SCRIPTS = "listScripts";
+	private static final String VIEW_SCRIPT_VAR = "scriptVar";
+	private static final String VIEW_SCRIPT_VARS = "scriptVars";
 	private static final String ACTION_ENABLE = "enable";
 	private static final String ACTION_DISABLE = "disable";
 	private static final String ACTION_RUN_STANDALONE = "runStandAloneScript";
 	private static final String ACTION_LOAD = "load";
 	private static final String ACTION_REMOVE = "remove";
+	private static final String ACTION_CLEAR_GLOBAL_VAR = "clearGlobalVar";
+	private static final String ACTION_CLEAR_GLOBAL_VARS = "clearGlobalVars";
+	private static final String ACTION_CLEAR_SCRIPT_VAR = "clearScriptVar";
+	private static final String ACTION_CLEAR_SCRIPT_VARS = "clearScriptVars";
+	private static final String ACTION_SET_GLOBAL_VAR = "setGlobalVar";
+	private static final String ACTION_SET_SCRIPT_VAR = "setScriptVar";
 	private static final String ACTION_PARAM_SCRIPT_NAME = "scriptName";
 	private static final String ACTION_PARAM_SCRIPT_DESC = "scriptDescription";
 	private static final String ACTION_PARAM_SCRIPT_TYPE = "scriptType";
 	private static final String ACTION_PARAM_SCRIPT_ENGINE = "scriptEngine";
 	private static final String ACTION_PARAM_FILE_NAME = "fileName";
 	private static final String ACTION_PARAM_CHARSET = "charset";
+	private static final String PARAM_VAR_KEY = "varKey";
+	private static final String PARAM_VAR_VALUE = "varValue";
 
 	private ExtensionScript extension;
 	
 	public ScriptAPI (ExtensionScript extension) {
 		this.extension = extension;
 		this.addApiView(new ApiView(VIEW_ENGINES, new String[]{}, new String[]{}));
+		this.addApiView(new ApiView(VIEW_TYPES));
 		this.addApiView(new ApiView(VIEW_SCRIPTS, new String[]{}, new String[]{}));
+		this.addApiView(new ApiView(VIEW_GLOBAL_VAR, new String[] { PARAM_VAR_KEY }));
+		this.addApiView(new ApiView(VIEW_GLOBAL_VARS));
+		this.addApiView(new ApiView(VIEW_SCRIPT_VAR, new String[] { ACTION_PARAM_SCRIPT_NAME, PARAM_VAR_KEY }));
+		this.addApiView(new ApiView(VIEW_SCRIPT_VARS, new String[] { ACTION_PARAM_SCRIPT_NAME }));
 		
 		this.addApiAction(new ApiAction(ACTION_ENABLE, new String[]{ACTION_PARAM_SCRIPT_NAME}, new String[]{}));
 		this.addApiAction(new ApiAction(ACTION_DISABLE, new String[]{ACTION_PARAM_SCRIPT_NAME}, new String[]{}));
@@ -72,6 +95,12 @@ public class ScriptAPI extends ApiImplementor {
 		this.addApiAction(new ApiAction(ACTION_REMOVE, new String[]{ACTION_PARAM_SCRIPT_NAME}, new String[]{}));
 		this.addApiAction(new ApiAction(ACTION_RUN_STANDALONE, new String[]{ACTION_PARAM_SCRIPT_NAME}, new String[]{}));
 
+		this.addApiAction(new ApiAction(ACTION_CLEAR_GLOBAL_VAR, new String[] { PARAM_VAR_KEY }));
+		this.addApiAction(new ApiAction(ACTION_CLEAR_GLOBAL_VARS));
+		this.addApiAction(new ApiAction(ACTION_CLEAR_SCRIPT_VAR, new String[] { ACTION_PARAM_SCRIPT_NAME, PARAM_VAR_KEY }));
+		this.addApiAction(new ApiAction(ACTION_CLEAR_SCRIPT_VARS, new String[] { ACTION_PARAM_SCRIPT_NAME }));
+		this.addApiAction(new ApiAction(ACTION_SET_SCRIPT_VAR, new String[] { ACTION_PARAM_SCRIPT_NAME, PARAM_VAR_KEY }, new String[] { PARAM_VAR_VALUE }));
+		this.addApiAction(new ApiAction(ACTION_SET_GLOBAL_VAR, new String[] { PARAM_VAR_KEY }, new String[] { PARAM_VAR_VALUE }));
 	}
 
 	@Override
@@ -110,9 +139,63 @@ public class ScriptAPI extends ApiImplementor {
 			}
 			return result;
  			
+		} else if (VIEW_TYPES.equals(name)) {
+			ApiResponseList result = new ApiResponseList(name);
+			for (ScriptType type : extension.getScriptTypes()) {
+				Map<String, String> data = new HashMap<>();
+				data.put("name", type.getName());
+				data.put("uiName", Constant.messages.getString(type.getI18nKey()));
+				String descKey = type.getI18nKey() + ".desc";
+				String description = Constant.messages.containsKey(descKey) ? Constant.messages.getString(descKey) : "";
+				data.put("description", description);
+				result.addItem(new ApiResponseSet<>("type", data));
+			}
+			return result;
+		} else if (VIEW_GLOBAL_VAR.equals(name)) {
+			String value = ScriptVars.getGlobalVar(params.getString(PARAM_VAR_KEY));
+			validateVarValue(value);
+			return new ApiResponseElement(name, value);
+		} else if (VIEW_GLOBAL_VARS.equals(name)) {
+			return new ScriptVarsResponse(name, ScriptVars.getGlobalVars());
+		} else if (VIEW_SCRIPT_VAR.equals(name)) {
+			String value = ScriptVars.getScriptVar(getAndValidateScriptName(params), params.getString(PARAM_VAR_KEY));
+			validateVarValue(value);
+			return new ApiResponseElement(name, value);
+		} else if (VIEW_SCRIPT_VARS.equals(name)) {
+			return new ScriptVarsResponse(name, ScriptVars.getScriptVars(getAndValidateScriptName(params)));
 		} else {
 			throw new ApiException(ApiException.Type.BAD_VIEW);
 		}
+	}
+
+	/**
+	 * Validates that the value is non-{@code null}, that is, the variable exists.
+	 *
+	 * @param varValue the value of the variable to validate.
+	 * @throws ApiException if the value is {@code null}.
+	 */
+	private static void validateVarValue(String varValue) throws ApiException {
+		if (varValue == null) {
+			throw new ApiException(ApiException.Type.DOES_NOT_EXIST, PARAM_VAR_KEY);
+		}
+	}
+
+	/**
+	 * Gets and validates that the parameter named {@value #ACTION_PARAM_SCRIPT_NAME}, in {@code parameters}, represents an
+	 * existing script name.
+	 * <p>
+	 * The parameter must exist, that is, it should be a mandatory parameter, otherwise a runtime exception is thrown.
+	 * 
+	 * @param params the parameters of the API request.
+	 * @return the name of a existing script.
+	 * @throws ApiException if the no script exists with the given name.
+	 */
+	private String getAndValidateScriptName(JSONObject params) throws ApiException {
+		String scriptName = params.getString(ACTION_PARAM_SCRIPT_NAME);
+		if (extension.getScript(scriptName) == null) {
+			throw new ApiException(ApiException.Type.DOES_NOT_EXIST, ACTION_PARAM_SCRIPT_NAME);
+		}
+		return scriptName;
 	}
 
 	@Override
@@ -153,6 +236,9 @@ public class ScriptAPI extends ApiImplementor {
 			File file = new File(params.getString(ACTION_PARAM_FILE_NAME));
 			if (!file.exists()) {
 				throw new ApiException(ApiException.Type.DOES_NOT_EXIST, file.getAbsolutePath());
+			}
+			if (extension.getScript(params.getString(ACTION_PARAM_SCRIPT_NAME)) != null) {
+				throw new ApiException(ApiException.Type.ALREADY_EXISTS, ACTION_PARAM_SCRIPT_NAME);
 			}
 			
 			ScriptWrapper script = new ScriptWrapper(
@@ -207,6 +293,27 @@ public class ScriptAPI extends ApiImplementor {
 			}
 			return ApiResponseElement.OK;
 
+		} else if (ACTION_CLEAR_GLOBAL_VAR.equals(name)) {
+			ScriptVars.setGlobalVar(params.getString(PARAM_VAR_KEY), null);
+			return ApiResponseElement.OK;
+		} else if (ACTION_CLEAR_GLOBAL_VARS.equals(name)) {
+			ScriptVars.clearGlobalVars();
+			return ApiResponseElement.OK;
+		} else if (ACTION_CLEAR_SCRIPT_VAR.equals(name)) {
+			ScriptVars.setScriptVar(getAndValidateScriptName(params), params.getString(PARAM_VAR_KEY), null);
+			return ApiResponseElement.OK;
+		} else if (ACTION_CLEAR_SCRIPT_VARS.equals(name)) {
+			ScriptVars.clearScriptVars(getAndValidateScriptName(params));
+			return ApiResponseElement.OK;
+		} else if (ACTION_SET_GLOBAL_VAR.equals(name)) {
+			ScriptVars.setGlobalVar(params.getString(PARAM_VAR_KEY), params.getString(PARAM_VAR_VALUE));
+			return ApiResponseElement.OK;
+		} else if (ACTION_SET_SCRIPT_VAR.equals(name)) {
+			ScriptVars.setScriptVar(
+					getAndValidateScriptName(params),
+					params.getString(PARAM_VAR_KEY),
+					params.getString(PARAM_VAR_VALUE));
+			return ApiResponseElement.OK;
 		} else {
 			throw new ApiException(ApiException.Type.BAD_VIEW);
 		}
@@ -230,4 +337,53 @@ public class ScriptAPI extends ApiImplementor {
 		}
 	}
 
+	private static class ScriptVarsResponse extends ApiResponse {
+
+		private final ApiResponseSet<String> defaultResponse;
+		private final ApiResponseList xmlResponse;
+
+		public ScriptVarsResponse(String name, Map<String, String> vars) {
+			super(name);
+
+			defaultResponse = new ApiResponseSet<String>(name, vars) {
+
+				@Override
+				public JSON toJSON() {
+					JSONObject response = new JSONObject();
+					response.put(name, super.toJSON());
+					return response;
+				}
+			};
+
+			xmlResponse = new ApiResponseList(name);
+			synchronized (vars) {
+				for (Entry<String, String> entry : vars.entrySet()) {
+					Map<String, String> varData = new HashMap<>();
+					varData.put("key", entry.getKey());
+					varData.put("value", entry.getValue());
+					xmlResponse.addItem(new ApiResponseSet<>("var", varData));
+				}
+			}
+		}
+
+		@Override
+		public JSON toJSON() {
+			return defaultResponse.toJSON();
+		}
+
+		@Override
+		public void toXML(Document doc, Element rootElement) {
+			xmlResponse.toXML(doc, rootElement);
+		}
+
+		@Override
+		public void toHTML(StringBuilder sb) {
+			defaultResponse.toHTML(sb);
+		}
+
+		@Override
+		public String toString(int indent) {
+			return defaultResponse.toString(indent);
+		}
+	}
 }

@@ -81,7 +81,7 @@ public class UsersAPI extends ApiImplementor {
 		this.extension = extension;
 
 		this.addApiView(new ApiView(VIEW_USERS_LIST, null, new String[] { PARAM_CONTEXT_ID }));
-		this.addApiView(new ApiView(VIEW_GET_USER_BY_ID, null,
+		this.addApiView(new ApiView(VIEW_GET_USER_BY_ID,
 				new String[] { PARAM_CONTEXT_ID, PARAM_USER_ID }));
 		this.addApiView(new ApiView(VIEW_GET_AUTH_CREDENTIALS_CONFIG_PARAMETERS,
 				new String[] { PARAM_CONTEXT_ID }));
@@ -238,8 +238,7 @@ public class UsersAPI extends ApiImplementor {
 		fields.put("enabled", Boolean.toString(u.isEnabled()));
 		fields.put("credentials", u.getAuthenticationCredentials().getApiResponseRepresentation().toJSON()
 				.toString());
-		ApiResponseSet<String> response = new ApiResponseSet<String>("user", fields);
-		return response;
+		return new ApiResponseSet<>("user", fields);
 	}
 
 	/**
@@ -273,7 +272,7 @@ public class UsersAPI extends ApiImplementor {
 
 	/**
 	 * Gets the context id from the parameters or throws a Missing Parameter exception, if any
-	 * problems occured.
+	 * problems occurred.
 	 * 
 	 * @param params the params
 	 * @return the context id

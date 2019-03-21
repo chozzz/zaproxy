@@ -48,7 +48,7 @@ public class SqlTableTag extends SqlAbstractTable implements TableTag {
         try {
 			if (!DbUtils.hasTable(conn, TABLE_NAME)) {
 			    // Need to create the table
-			    DbUtils.executeAndClose(conn.prepareStatement(DbSQL.getSQL("tag.ps.createtable")));
+			    DbUtils.execute(conn, DbSQL.getSQL("tag.ps.createtable"));
 			}
 		} catch (SQLException e) {
 			throw new DatabaseException(e);
@@ -66,8 +66,7 @@ public class SqlTableTag extends SqlAbstractTable implements TableTag {
 			psRead.getPs().setLong(1, tagId);
 			
 			try (ResultSet rs = psRead.getPs().executeQuery()) {
-				RecordTag result = build(rs);
-				return result;
+				return build(rs);
 			}
 		} catch (SQLException e) {
 			throw new DatabaseException(e);

@@ -24,6 +24,7 @@ import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.ServerSocket;
 import java.net.URL;
+import java.net.UnknownHostException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,7 +39,6 @@ import org.parosproxy.paros.core.proxy.ProxyServer;
 import org.parosproxy.paros.extension.ExtensionAdaptor;
 import org.parosproxy.paros.extension.ExtensionHook;
 import org.parosproxy.paros.extension.OptionsChangedListener;
-import org.parosproxy.paros.extension.history.ExtensionHistory;
 import org.parosproxy.paros.model.OptionsParam;
 import org.zaproxy.zap.utils.ZapXmlConfiguration;
 
@@ -65,6 +65,11 @@ public class ExtensionProxies extends ExtensionAdaptor implements OptionsChanged
 
     @Override
     public void init() {
+    }
+
+    @Override
+    public boolean supportsDb(String type) {
+        return true;
     }
 
     @Override
@@ -108,6 +113,7 @@ public class ExtensionProxies extends ExtensionAdaptor implements OptionsChanged
 
     private void restartProxies() {
         List<ProxiesParamProxy> proxyParams = this.getParam().getProxies();
+        Map<String, ProxiesParamProxy> newProxies = new HashMap<>();
         Map<String, ProxyServer> currentProxies = proxyServers;
         proxyServers = new HashMap<String, ProxyServer>();
         for (ProxiesParamProxy proxyParam : proxyParams) {
@@ -117,16 +123,20 @@ public class ExtensionProxies extends ExtensionAdaptor implements OptionsChanged
                 ProxyServer proxy = currentProxies.remove(key);
                 if (proxy == null) {
                     // Its a new one
-                    proxy = startProxyServer(proxyParam);
+                    newProxies.put(key, proxyParam);
                 } else {
                     applyProxyOptions(proxyParam, proxy);
+                    proxyServers.put(key, proxy);
                 }
-                proxyServers.put(key, proxy);
             }
         }
         // Any proxies left have been removed
         for (Entry<String, ProxyServer> entry : currentProxies.entrySet()) {
             stopProxyServer(entry.getKey(), entry.getValue());
+        }
+        for (Entry<String, ProxiesParamProxy> entry : newProxies.entrySet()) {
+            ProxyServer proxy = startProxyServer(entry.getValue());
+            proxyServers.put(entry.getKey(), proxy);
         }
     }
 
@@ -177,16 +187,15 @@ public class ExtensionProxies extends ExtensionAdaptor implements OptionsChanged
         proxyServer.setConnectionParam(getModel().getOptionsParam().getConnectionParam());
         // Note that if this is _not_ set then the proxy will go into a nasty loop if you point a browser at it
         proxyServer.setEnableApi(true);
-        if (proxyServer.startServer(address, port, false) > 0) {
-            Control.getSingleton().getExtensionLoader().getExtension(ExtensionHistory.class).registerProxy(proxyServer);
-        }
+        Control.getSingleton().getExtensionLoader().addProxyServer(proxyServer);
+        proxyServer.startServer(address, port, false);
         return proxyServer;
     }
 
     private void stopProxyServer(String proxyKey, ProxyServer proxyServer) {
         log.info("Stopping alt proxy server: " + proxyKey);
-        Control.getSingleton().getExtensionLoader().getExtension(ExtensionHistory.class).unregisterProxy(proxyServer);
         proxyServer.stopServer();
+        Control.getSingleton().getExtensionLoader().removeProxyServer(proxyServer);
     }
 
     public List<ProxiesParamProxy> getAdditionalProxies() {
@@ -272,6 +281,18 @@ public class ExtensionProxies extends ExtensionAdaptor implements OptionsChanged
             return new URL(Constant.ZAP_HOMEPAGE);
         } catch (MalformedURLException e) {
             return null;
+        }
+    }
+
+    static boolean isSameAddress(String address, String otherAddress) {
+        if (address.equals(otherAddress)) {
+            return true;
+        }
+
+        try {
+            return InetAddress.getByName(address).equals(InetAddress.getByName(otherAddress));
+        } catch (UnknownHostException e) {
+            return false;
         }
     }
 

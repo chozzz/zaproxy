@@ -20,8 +20,6 @@
 package org.zaproxy.zap.extension.script;
 
 import java.awt.EventQueue;
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -42,6 +40,8 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import javax.script.Invocable;
 import javax.script.ScriptContext;
@@ -145,14 +145,31 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 	 * @see #optionsLoaded()
 	 */
 	private boolean shouldLoadTemplatesOnScriptTypeRegistration;
+
+	/**
+	 * The directories added to the extension, to automatically add and remove its scripts.
+	 * 
+	 * @see #addScriptsFromDir(File)
+	 * @see #removeScriptsFromDir(File)
+	 */
+	private List<File> trackedDirs = Collections.synchronizedList(new ArrayList<>());
 	
+    /**
+     * The script output listeners added to the extension.
+     * 
+     * @see #addScriptOutputListener(ScriptOutputListener)
+     * @see #getWriters(ScriptWrapper)
+     * @see #removeScriptOutputListener(ScriptOutputListener)
+     */
+    private List<ScriptOutputListener> outputListeners = new CopyOnWriteArrayList<>();
+
     public ExtensionScript() {
         super(NAME);
         this.setOrder(EXTENSION_ORDER);
         
         ScriptEngine se = mgr.getEngineByName("ECMAScript");
         if (se != null) {
-        	this.registerScriptEngineWrapper(new JavascriptEngineWrapper(se));
+        	this.registerScriptEngineWrapper(new JavascriptEngineWrapper(se.getFactory()));
         } else {
         	logger.error("No Javascript/ECMAScript engine found");
         }
@@ -194,7 +211,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 	}
 
 	/**
-	 * Creates an {@code ImageIcon} with the give resource path, if in view mode.
+	 * Creates an {@code ImageIcon} with the given resource path, if in view mode.
 	 *
 	 * @param resourcePath the resource path of the icon, must not be {@code null}.
 	 * @return the icon, or {@code null} if not in view mode.
@@ -234,7 +251,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			engineNames.add(engine.getLanguageName() + LANG_ENGINE_SEP + engine.getEngineName());
 		}
 		for (ScriptEngineWrapper sew : this.engineWrappers) {
-			if (! engines.contains(sew.getFactory())) {
+			if (sew.isVisible() && ! engines.contains(sew.getFactory())) {
 				engineNames.add(sew.getLanguageName() + LANG_ENGINE_SEP + sew.getEngineName());
 			}
 		}
@@ -263,6 +280,15 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 		
 		// Templates for this engine might not have been loaded
 		this.loadTemplates(wrapper);
+
+		synchronized (trackedDirs) {
+			String engineName = wrapper.getLanguageName() + LANG_ENGINE_SEP + wrapper.getEngineName();
+			for (File dir : trackedDirs) {
+				for (ScriptType type : this.getScriptTypes()) {
+					addScriptsFromDir(dir, type, engineName);
+				}
+			}
+		}
 
 		if (scriptUI != null) {
 			try {
@@ -349,18 +375,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			return false;
 		}
 
-		if (name.equals(engineName)) {
-			return true;
-		}
-
-		// Nasty, but sometime the engine names are reported differently, eg 'Mozilla Rhino' vs 'Rhino'
-		if (name.endsWith(engineName)) {
-			return true;
-		}
-		if (engineName.endsWith(name)) {
-			return true;
-		}
-		return false;
+		return name.equals(engineName);
 	}
 
 	/**
@@ -428,7 +443,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			}
 		}
 		if (engine != null) {
-			DefaultEngineWrapper dew = new DefaultEngineWrapper(engine);
+			DefaultEngineWrapper dew = new DefaultEngineWrapper(engine.getFactory());
 			this.registerScriptEngineWrapper(dew);
 			return dew;
 		}
@@ -485,6 +500,12 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 		if (shouldLoadTemplatesOnScriptTypeRegistration) {
 			loadScriptTemplates(type);
 		}
+
+		synchronized (trackedDirs) {
+			for (File dir : trackedDirs) {
+				addScriptsFromDir(dir, type, null);
+			}
+		}
 	}
 	
 	/**
@@ -537,15 +558,42 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			try {
 				listener.refreshScript(script);
 			} catch (Exception e) {
-				logger.error(e.getMessage(), e);
+				logScriptEventListenerException(listener, script, e);
+			}
+		}
+	}
+	
+	private void reloadIfChangedOnDisk(ScriptWrapper script) {
+		if (script.hasChangedOnDisk() && ! script.isChanged()) {
+			try {
+				logger.debug("Reloading script as its been changed on disk " + script.getFile().getAbsolutePath());
+				script.reloadScript();
+			} catch (IOException e) {
+				logger.error("Failed to reload script " + script.getFile().getAbsolutePath(), e);
 			}
 		}
 	}
 	
 	public ScriptWrapper getScript(String name) {
-		ScriptWrapper script =  this.getTreeModel().getScript(name);
-		refreshScript(script);
+		ScriptWrapper script = getScriptImpl(name);
+		if (script != null) {
+			refreshScript(script);
+			reloadIfChangedOnDisk(script);
+		}
 		return script;
+	}
+
+	/**
+	 * Gets the script with the given name.
+	 * <p>
+	 * Internal method that does not perform any actions on the returned script.
+	 *
+	 * @param name the name of the script.
+	 * @return the script, or {@code null} if it doesn't exist.
+	 * @see #getScript(String)
+	 */
+	private ScriptWrapper getScriptImpl(String name) {
+		return this.getTreeModel().getScript(name);
 	}
 	
 	public ScriptNode addScript(ScriptWrapper script) {
@@ -562,7 +610,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			try {
 				listener.scriptAdded(script, display);
 			} catch (Exception e) {
-				logger.error(e.getMessage(), e);
+				logScriptEventListenerException(listener, script, e);
 			}
 		}
 		if (script.isLoadOnStart() && script.getFile() != null) {
@@ -572,11 +620,15 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 		return node;
 	}
 
+	private void logScriptEventListenerException(ScriptEventListener listener, ScriptWrapper script, Exception e) {
+		String classname = listener.getClass().getCanonicalName();
+		String scriptName = script.getName();
+		logger.error("Error while notifying '" + classname + "' with script '" + scriptName + "', cause: " + e.getMessage(), e);
+	}
+
 	public void saveScript(ScriptWrapper script) throws IOException {
 		refreshScript(script);
-        try ( BufferedWriter bw = Files.newBufferedWriter(script.getFile().toPath(), DEFAULT_CHARSET)) {
-            bw.append(script.getContents());
-        }
+		script.saveScript();
         this.setChanged(script, false);
         // The removal is required for script that use wrappers, like Zest
 		this.getScriptParam().removeScript(script);
@@ -587,7 +639,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			try {
 				listener.scriptSaved(script);
 			} catch (Exception e) {
-				logger.error(e.getMessage(), e);
+				logScriptEventListenerException(listener, script, e);
 			}
 		}
 	}
@@ -601,7 +653,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			try {
 				listener.scriptRemoved(script);
 			} catch (Exception e) {
-				logger.error(e.getMessage(), e);
+				logScriptEventListenerException(listener, script, e);
 			}
 		}
 	}
@@ -612,7 +664,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			try {
 				listener.templateRemoved(template);
 			} catch (Exception e) {
-				logger.error(e.getMessage(), e);
+				logScriptEventListenerException(listener, template, e);
 			}
 		}
 	}
@@ -631,7 +683,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			try {
 				listener.templateAdded(template, display);
 			} catch (Exception e) {
-				logger.error(e.getMessage(), e);
+				logScriptEventListenerException(listener, template, e);
 			}
 		}
 		return node;
@@ -775,49 +827,111 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
     }
 
 	
+	/**
+	 * Adds the scripts from the given directory and starts tracking it.
+	 * <p>
+	 * The directory will be tracked to add or remove its scripts when a new script engine/type is added or removed.
+	 * <p>
+	 * The scripts are expected to be under directories of the corresponding script type, for example:
+	 * <pre>
+	 * {@code
+	 * (dir specified)
+	 * ├── active
+	 * │   ├── gof_lite.js
+	 * │   ├── TestInsecureHTTPVerbs.py
+	 * │   └── User defined attacks.js
+	 * ├── extender
+	 * │   └── HTTP Message Logger.js
+	 * ├── httpfuzzerprocessor
+	 * │   ├── add_msgs_sites_tree.js
+	 * │   ├── http_status_code_filter.py
+	 * │   └── showDifferences.js
+	 * ├── httpsender
+	 * │   ├── add_header_request.py
+	 * │   └── Capture and Replace Anti CSRF Token.js
+	 * └── variant
+	 *     └── JsonStrings.js
+	 * }
+	 * </pre>
+	 * 
+	 * where {@code active}, {@code extender}, {@code httpfuzzerprocessor}, {@code httpsender}, and {@code variant} are the
+	 * script types.
+	 * 
+	 * @param dir the directory from where to add the scripts.
+	 * @return the number of scripts added.
+	 * @since 2.4.1
+	 * @see #removeScriptsFromDir(File)
+	 */
 	public int addScriptsFromDir (File dir) {
 		logger.debug("Adding scripts from dir: " + dir.getAbsolutePath());
+		trackedDirs.add(dir);
 		int addedScripts = 0;
 		for (ScriptType type : this.getScriptTypes()) {
-			File locDir = new File(dir, type.getName());
-			if (locDir.exists()) {
-				for (File f : locDir.listFiles()) {
-					String ext = f.getName().substring(f.getName().lastIndexOf(".") + 1);
-					String engineName = this.getEngineNameForExtension(ext);
-					
-					if (engineName != null) {
-						try {
-							if (f.canWrite()) {
-								String scriptName = this.getUniqueScriptName(f.getName(), ext);
-								logger.debug("Loading script " + scriptName);
-								ScriptWrapper sw = new ScriptWrapper(scriptName, "", 
-										this.getEngineWrapper(engineName), type, false, f);
-								this.loadScript(sw);
-								this.addScript(sw, false);
-							} else {
-								// Cant write so add as a template
-								String scriptName = this.getUniqueTemplateName(f.getName(), ext);
-								logger.debug("Loading script " + scriptName);
-								ScriptWrapper sw = new ScriptWrapper(scriptName, "", 
-										this.getEngineWrapper(engineName), type, false, f);
-								this.loadScript(sw);
-								this.addTemplate(sw, false);
-							}
-							addedScripts++;
-						} catch (Exception e) {
-							logger.error(e.getMessage(), e);
+			addedScripts += addScriptsFromDir(dir, type, null);
+		}
+		return addedScripts;
+	}
+
+	/**
+	 * Adds the scripts from the given directory of the given script type and, optionally, for the engine with the given name.
+	 *
+	 * @param dir the directory from where to add the scripts.
+	 * @param type the script type, must not be {@code null}.
+	 * @param targetEngineName the engine that the scripts must be of, {@code null} for all engines.
+	 * @return the number of scripts added.
+	 */
+	private int addScriptsFromDir(File dir, ScriptType type, String targetEngineName) {
+		int addedScripts = 0;
+		File typeDir = new File(dir, type.getName());
+		if (typeDir.exists()) {
+			for (File f : typeDir.listFiles()) {
+				String ext = f.getName().substring(f.getName().lastIndexOf(".") + 1);
+				String engineName = this.getEngineNameForExtension(ext);
+				
+				if (engineName != null && (targetEngineName == null || engineName.equals(targetEngineName))) {
+					try {
+						if (f.canWrite()) {
+							String scriptName = this.getUniqueScriptName(f.getName(), ext);
+							logger.debug("Loading script " + scriptName);
+							ScriptWrapper sw = new ScriptWrapper(scriptName, "", 
+									this.getEngineWrapper(engineName), type, false, f);
+							this.loadScript(sw);
+							this.addScript(sw, false);
+						} else {
+							// Cant write so add as a template
+							String scriptName = this.getUniqueTemplateName(f.getName(), ext);
+							logger.debug("Loading script " + scriptName);
+							ScriptWrapper sw = new ScriptWrapper(scriptName, "", 
+									this.getEngineWrapper(engineName), type, false, f);
+							this.loadScript(sw);
+							this.addTemplate(sw, false);
 						}
-					} else {
-						logger.debug("Ignoring " + f.getName());
+						addedScripts++;
+					} catch (Exception e) {
+						logger.error(e.getMessage(), e);
 					}
+				} else {
+					logger.debug("Ignoring " + f.getName());
 				}
 			}
 		}
 		return addedScripts;
 	}
 
+	/**
+	 * Removes the scripts added from the given directory and stops tracking it.
+	 * <p>
+	 * The number of scripts removed might be different than the number of scripts initially added, as a script engine or type
+	 * might have been added or removed in the meantime.
+	 * 
+	 * @param dir the directory previously added.
+	 * @return the number of scripts removed.
+	 * @since 2.4.1
+	 * @see #addScriptsFromDir(File)
+	 */
 	public int removeScriptsFromDir (File dir) {
 		logger.debug("Removing scripts from dir: " + dir.getAbsolutePath());
+		trackedDirs.remove(dir);
 		int removedScripts = 0;
 		
 		for (ScriptType type : this.getScriptTypes()) {
@@ -828,13 +942,13 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 				// Loop through all of the known scripts and templates 
 				// removing any from this directory
 				for (ScriptWrapper sw : this.getScripts(type)) {
-					if (sw.getFile().getParentFile().equals(locDir)) {
+					if (isSavedInDir(sw, locDir)) {
 						this.removeScript(sw);
 						removedScripts++;
 					}
 				}
 				for (ScriptWrapper sw : this.getTemplates(type)) {
-					if (sw.getFile().getParentFile().equals(locDir)) {
+					if (isSavedInDir(sw, locDir)) {
 						this.removeTemplate(sw);
 						removedScripts++;
 					}
@@ -844,7 +958,28 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 		return removedScripts;
 	}
 	
+	/**
+	 * Tells whether or not the given script is saved in the given directory.
+	 *
+	 * @param scriptWrapper the script to check.
+	 * @param directory the directory where to check.
+	 * @return {@code true} if the script is saved in the given directory, {@code false} otherwise.
+	 */
+	private static boolean isSavedInDir(ScriptWrapper scriptWrapper, File directory) {
+		File file = scriptWrapper.getFile();
+		if (file == null) {
+			return false;
+		}
+		return file.getParentFile().equals(directory);
+	}
 
+	/**
+	 * Gets the numbers of scripts for the given directory for the currently registered script engines and types.
+	 * 
+	 * @param dir the directory to check.
+	 * @return the number of scripts.
+	 * @since 2.4.1
+	 */
 	public int getScriptCount(File dir) {
 		int scripts = 0;
 		
@@ -868,7 +1003,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 	 * Returns a unique name for the given script name
 	 */
 	private String getUniqueScriptName(String name, String ext) {
-		if (this.getScript(name) == null) {
+		if (this.getScriptImpl(name) == null) {
 			// Its unique
 			return name;
 		}
@@ -879,7 +1014,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			index++;
 			name = stub + "(" + index + ")." + ext;
 		}
-		while (this.getScript(name) != null);
+		while (this.getScriptImpl(name) != null);
 		
 		return name;
 	}
@@ -1024,16 +1159,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 		if (charset == null) {
 			throw new IllegalArgumentException("Parameter charset must not be null.");
 		}
-	    StringBuilder sb = new StringBuilder();
-        try (BufferedReader br = Files.newBufferedReader(script.getFile().toPath(), charset)) {
-			int len;
-			char[] buf = new char[1024];
-			while ((len = br.read(buf)) != -1) {
-			    sb.append(buf, 0, len);
-			}
-		}
-        script.setContents(sb.toString());
-        script.setChanged(false);
+		script.loadScript(charset);
         
         if (script.getType() == null) {
         	// This happens when scripts are loaded from the configs as the types 
@@ -1076,21 +1202,20 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 	 * ever script. It also supports script specific writers.
 	 */
 	private Writer getWriters(ScriptWrapper script) {
+		Writer delegatee = this.writers;
 		Writer writer = script.getWriter();
-		if (writer == null) {
-			// No script specific writer, just return the std one
-			return this.writers;
-		} else {
-			// Return the script specific writer in addition to the std one
+		if (writer != null) {
+			// Use the script specific writer in addition to the std one
 			MultipleWriters scriptWriters = new MultipleWriters();
 			scriptWriters.addWriter(writer);
 			scriptWriters.addWriter(writers);
-			return scriptWriters;
+			delegatee = scriptWriters;
 		}
+		return new ScriptWriter(script, delegatee, outputListeners);
 	}
 
 	/**
-	 * Invokes the given {@code script}, handling any {@code Exception} thrown during the invocation.
+	 * Invokes the given {@code script}, synchronously, handling any {@code Exception} thrown during the invocation.
 	 * <p>
 	 * The context class loader of caller thread is replaced with the class loader {@code AddOnLoader} to allow the script to
 	 * access classes of add-ons. If this behaviour is not desired call the method {@code invokeScriptWithOutAddOnLoader}
@@ -1145,7 +1270,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			try {
 				listener.preInvoke(script);
 			} catch (Exception e) {
-				logger.error(e.getMessage(), e);
+				logScriptEventListenerException(listener, script, e);
 			}
 		}
 	}
@@ -1168,6 +1293,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 
 	    // Set the script name as a context attribute - this is used for script level variables 
 	    se.getContext().setAttribute(SCRIPT_NAME_ATT, script.getName(), ScriptContext.ENGINE_SCOPE);
+	    reloadIfChangedOnDisk(script);
 
 	    try {
 	    	se.eval(script.getContents());
@@ -1188,7 +1314,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 	}
 
 	/**
-	 * Invokes the given {@code script}, handling any {@code Exception} thrown during the invocation.
+	 * Invokes the given {@code script}, synchronously, handling any {@code Exception} thrown during the invocation.
 	 *
 	 * @param script the script that will be invoked/evaluated
 	 * @return an {@code Invocable} for the {@code script}, or {@code null} if none.
@@ -1249,6 +1375,18 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 		this.setEnabled(script, false);
 	}
 	
+	/**
+	 * Invokes the given {@code script}, synchronously, as a {@link TargetedScript}, handling any {@code Exception} thrown
+	 * during the invocation.
+	 * <p>
+	 * The context class loader of caller thread is replaced with the class loader {@code AddOnLoader} to allow the script to
+	 * access classes of add-ons.
+	 *
+	 * @param script the script to invoke.
+	 * @param msg the HTTP message to process.
+	 * @since 2.2.0
+	 * @see #getInterface(ScriptWrapper, Class)
+	 */
     public void invokeTargetedScript(ScriptWrapper script, HttpMessage msg) {
 		validateScriptType(script, TYPE_TARGETED);
 
@@ -1327,6 +1465,20 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 		this.setEnabled(script, false);
 	}
 
+	/**
+	 * Invokes the given {@code script}, synchronously, as a {@link ProxyScript}, handling any {@code Exception} thrown during
+	 * the invocation.
+	 * <p>
+	 * The context class loader of caller thread is replaced with the class loader {@code AddOnLoader} to allow the script to
+	 * access classes of add-ons.
+	 *
+	 * @param script the script to invoke.
+	 * @param msg the HTTP message being proxied.
+	 * @param request {@code true} if processing the request, {@code false} otherwise.
+	 * @return {@code true} if the request should be forward to the server, {@code false} otherwise.
+	 * @since 2.2.0
+	 * @see #getInterface(ScriptWrapper, Class)
+	 */
     public boolean invokeProxyScript(ScriptWrapper script, HttpMessage msg, boolean request) {
 		validateScriptType(script, TYPE_PROXY);
 
@@ -1353,6 +1505,21 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
     	return true;
 	}
 
+    /**
+     * Invokes the given {@code script}, synchronously, as a {@link HttpSenderScript}, handling any {@code Exception} thrown
+     * during the invocation.
+     * <p>
+     * The context class loader of caller thread is replaced with the class loader {@code AddOnLoader} to allow the script to
+     * access classes of add-ons.
+     *
+     * @param script the script to invoke.
+     * @param msg the HTTP message being sent/received.
+     * @param initiator the initiator of the request.
+     * @param sender the sender of the given {@code HttpMessage}.
+     * @param request {@code true} if processing the request, {@code false} otherwise.
+     * @since 2.4.1
+     * @see #getInterface(ScriptWrapper, Class)
+     */
     public void invokeSenderScript(ScriptWrapper script, HttpMessage msg, int initiator, HttpSender sender, boolean request) {
         validateScriptType(script, TYPE_HTTP_SENDER);
 
@@ -1403,7 +1570,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			try {
 				listener.scriptChanged(script);
 			} catch (Exception e) {
-				logger.error(e.getMessage(), e);
+				logScriptEventListenerException(listener, script, e);
 			}
 		}
 	}
@@ -1434,7 +1601,7 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 			try {
 				listener.scriptError(script);
 			} catch (Exception e) {
-				logger.error(e.getMessage(), e);
+				logScriptEventListenerException(listener, script, e);
 			}
 		}
 	}
@@ -1452,12 +1619,51 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 		this.listeners.remove(listener);
 	}
 
+	/**
+	 * Adds the given writer.
+	 * <p>
+	 * It will be written to each time a script writes some output.
+	 *
+	 * @param writer the writer to add.
+	 * @see #removeWriter(Writer)
+	 * @see #addScriptOutputListener(ScriptOutputListener)
+	 */
 	public void addWriter(Writer writer) {
 		this.writers.addWriter(writer);
 	}
 	
+	/**
+	 * Removes the given writer.
+	 *
+	 * @param writer the writer to remove.
+	 * @see #addWriter(Writer)
+	 */
 	public void removeWriter(Writer writer) {
 		this.writers.removeWriter(writer);
+	}
+
+	/**
+	 * Adds the given script output listener.
+	 *
+	 * @param listener the listener to add.
+	 * @since TODO add version
+	 * @throws NullPointerException if the given listener is {@code null}.
+	 * @see #removeScriptOutputListener(ScriptOutputListener)
+	 */
+	public void addScriptOutputListener(ScriptOutputListener listener) {
+		outputListeners.add(Objects.requireNonNull(listener, "The parameter listener must not be null."));
+	}
+
+	/**
+	 * Removes the given script output listener.
+	 *
+	 * @param listener the listener to remove.
+	 * @since TODO add version
+	 * @throws NullPointerException if the given listener is {@code null}.
+	 * @see #addScriptOutputListener(ScriptOutputListener)
+	 */
+	public void removeScriptOutputListener(ScriptOutputListener listener) {
+		outputListeners.remove(Objects.requireNonNull(listener, "The parameter listener must not be null."));
 	}
 
 	public ScriptUI getScriptUI() {
@@ -1695,4 +1901,39 @@ public class ExtensionScript extends ExtensionAdaptor implements CommandLineList
 		}
 
 	}
+
+    /**
+     * A {@code Writer} that notifies {@link ScriptOutputListener}s when writing.
+     */
+    private static class ScriptWriter extends Writer {
+
+        private final ScriptWrapper script;
+        private final Writer delegatee;
+        private final List<ScriptOutputListener> outputListeners;
+
+        public ScriptWriter(ScriptWrapper script, Writer delegatee, List<ScriptOutputListener> outputListeners) {
+            this.script = Objects.requireNonNull(script);
+            this.delegatee = Objects.requireNonNull(delegatee);
+            this.outputListeners = Objects.requireNonNull(outputListeners);
+        }
+
+        @Override
+        public void write(char[] cbuf, int off, int len) throws IOException {
+            delegatee.write(cbuf, off, len);
+            if (!outputListeners.isEmpty()) {
+                String output = new String(cbuf, off, len);
+                outputListeners.forEach(e -> e.output(script, output));
+            }
+        }
+
+        @Override
+        public void flush() throws IOException {
+            delegatee.flush();
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegatee.close();
+        }
+    }
 }

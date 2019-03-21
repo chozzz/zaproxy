@@ -41,6 +41,9 @@
 // ZAP: 2017/05/15 Ensure HttpState is non-null when HTTP State is enabled.
 // ZAP: 2017/06/19 Do not allow to set negative timeout values and expose the default value.
 // ZAP: 2017/09/26 Use helper methods to read the configurations.
+// ZAP: 2018/02/14 Remove unnecessary boxing / unboxing
+// ZAP: 2018/08/10 Set the default user agent to HttpRequestHeader (Issue 4846).
+
 package org.parosproxy.paros.network;
 
 import java.security.Security;
@@ -155,7 +158,7 @@ public class ConnectionParam extends AbstractParam {
      */
     public void setHttpStateEnabled(boolean httpStateEnabled) {
         setHttpStateEnabledImpl(httpStateEnabled);
-        getConfig().setProperty(HTTP_STATE_ENABLED, Boolean.valueOf(this.httpStateEnabled));
+        getConfig().setProperty(HTTP_STATE_ENABLED, this.httpStateEnabled);
     }
 
     private void setHttpStateEnabledImpl(boolean httpStateEnabled) {
@@ -213,6 +216,7 @@ public class ConnectionParam extends AbstractParam {
 		setHttpStateEnabledImpl(getBoolean(HTTP_STATE_ENABLED, false));
 
 		this.defaultUserAgent = getString(DEFAULT_USER_AGENT, DEFAULT_DEFAULT_USER_AGENT);
+		HttpRequestHeader.setDefaultUserAgent(defaultUserAgent);
         
         loadSecurityProtocolsEnabled();
 	}
@@ -308,7 +312,7 @@ public class ConnectionParam extends AbstractParam {
         }
 
         this.useProxyChain = useProxyChain;
-        getConfig().setProperty(USE_PROXY_CHAIN_KEY, Boolean.valueOf(this.useProxyChain));
+        getConfig().setProperty(USE_PROXY_CHAIN_KEY, this.useProxyChain);
     }
 
 	/**
@@ -412,7 +416,7 @@ public class ConnectionParam extends AbstractParam {
         }
 
         this.useProxyChainAuth = useProxyChainAuth;
-        getConfig().setProperty(USE_PROXY_CHAIN_AUTH_KEY, Boolean.valueOf(this.useProxyChainAuth));
+        getConfig().setProperty(USE_PROXY_CHAIN_AUTH_KEY, this.useProxyChainAuth);
     }
 
 	public String getProxyChainRealm() {
@@ -541,7 +545,7 @@ public class ConnectionParam extends AbstractParam {
 	 */
 	public void setSingleCookieRequestHeader(boolean singleCookieRequestHeader) {
 		this.singleCookieRequestHeader = singleCookieRequestHeader;
-		getConfig().setProperty(SINGLE_COOKIE_REQUEST_HEADER, Boolean.valueOf(singleCookieRequestHeader));
+		getConfig().setProperty(SINGLE_COOKIE_REQUEST_HEADER, singleCookieRequestHeader);
 	}
 
     /**
@@ -600,10 +604,8 @@ public class ConnectionParam extends AbstractParam {
             DomainMatcher excludedDomain = proxyExcludedDomains.get(i);
 
             getConfig().setProperty(elementBaseKey + PROXY_EXCLUDED_DOMAIN_VALUE_KEY, excludedDomain.getValue());
-            getConfig().setProperty(elementBaseKey + PROXY_EXCLUDED_DOMAIN_REGEX_KEY, Boolean.valueOf(excludedDomain.isRegex()));
-            getConfig().setProperty(
-                    elementBaseKey + PROXY_EXCLUDED_DOMAIN_ENABLED_KEY,
-                    Boolean.valueOf(excludedDomain.isEnabled()));
+            getConfig().setProperty(elementBaseKey + PROXY_EXCLUDED_DOMAIN_REGEX_KEY, excludedDomain.isRegex());
+            getConfig().setProperty(elementBaseKey + PROXY_EXCLUDED_DOMAIN_ENABLED_KEY, excludedDomain.isEnabled());
 
             if (excludedDomain.isEnabled()) {
                 enabledExcludedDomains.add(excludedDomain);
@@ -673,7 +675,7 @@ public class ConnectionParam extends AbstractParam {
     @ZapApiIgnore
     public void setConfirmRemoveProxyExcludedDomain(boolean confirmRemove) {
         this.confirmRemoveProxyExcludeDomain = confirmRemove;
-        getConfig().setProperty(CONFIRM_REMOVE_EXCLUDED_DOMAIN, Boolean.valueOf(confirmRemoveProxyExcludeDomain));
+        getConfig().setProperty(CONFIRM_REMOVE_EXCLUDED_DOMAIN, confirmRemoveProxyExcludeDomain);
     }
 
     /**
@@ -746,6 +748,7 @@ public class ConnectionParam extends AbstractParam {
 	}
 	public void setDefaultUserAgent(String defaultUserAgent) {
 		this.defaultUserAgent = defaultUserAgent;
+		HttpRequestHeader.setDefaultUserAgent(defaultUserAgent);
 		getConfig().setProperty(DEFAULT_USER_AGENT, defaultUserAgent);
 	}
 

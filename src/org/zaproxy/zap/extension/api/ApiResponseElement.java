@@ -18,12 +18,14 @@
 package org.zaproxy.zap.extension.api;
 
 import net.sf.json.JSON;
+import net.sf.json.JSONNull;
 import net.sf.json.JSONObject;
 
 import org.apache.commons.lang.StringEscapeUtils;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
+import org.zaproxy.zap.utils.JsonUtil;
 import org.zaproxy.zap.utils.XMLStringUtil;
 
 public class ApiResponseElement extends ApiResponse {
@@ -65,14 +67,12 @@ public class ApiResponseElement extends ApiResponse {
 
 	@Override
 	public JSON toJSON() {
-		if (value == null && apiResponse == null) {
-			return null;
-		}
 		JSONObject jo = new JSONObject();
 		if (apiResponse == null) {
-			jo.put(this.getName(), this.value);
+			jo.put(this.getName(), this.value == null ? JSONNull.getInstance() : JsonUtil.getJsonFriendlyString(this.value));
 		} else {
-			jo.put(this.getName(), apiResponse.toJSON());
+			// toString() is required to prevent auto conversion of text values to JSON
+			jo.put(this.getName(), apiResponse.toJSON().toString());
 		}
 		return jo;
 	}
@@ -80,7 +80,7 @@ public class ApiResponseElement extends ApiResponse {
 	@Override
 	public void toXML(Document doc, Element parent) {
 		if (apiResponse == null) {
-			parent.appendChild(doc.createTextNode(XMLStringUtil.escapeControlChrs(this.getValue())));
+			parent.appendChild(doc.createTextNode(getValue() != null ? XMLStringUtil.escapeControlChrs(this.getValue()) : ""));
 		} else {
 			apiResponse.toXML(doc, parent);
 		}

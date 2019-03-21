@@ -42,6 +42,11 @@
 // ZAP: 2017/09/02 Use KeyEvent instead of Event (deprecated in Java 9).
 // ZAP: 2017/11/01 Delete context with keyboard shortcut.
 // ZAP: 2017/11/16 Hide filtered nodes in macOS L&F.
+// ZAP: 2017/11/29 Delete site nodes with keyboard shortcut.
+// ZAP: 2017/12/22 Select context on row click.
+// ZAP: 2018/03/26 Expand node of selected context.
+// ZAP: 2018/04/12 Keep panel of selected context selected.
+// ZAP: 2018/07/17 Use ViewDelegate.getMenuShortcutKeyStroke.
 
 package org.parosproxy.paros.view;
 
@@ -51,12 +56,13 @@ import java.awt.EventQueue;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
-import java.awt.Toolkit;
+import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import javax.swing.AbstractAction;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
@@ -79,6 +85,7 @@ import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.control.Control;
 import org.parosproxy.paros.db.DatabaseException;
 import org.parosproxy.paros.extension.AbstractPanel;
+import org.parosproxy.paros.extension.history.ExtensionHistory;
 import org.parosproxy.paros.extension.history.LogPanel;
 import org.parosproxy.paros.model.HistoryReference;
 import org.parosproxy.paros.model.Model;
@@ -151,7 +158,7 @@ public class SiteMapPanel extends AbstractPanel {
 		this.setHideable(false);
 	    this.setIcon(new ImageIcon(View.class.getResource("/resource/icon/16/094.png")));
 	    this.setName(Constant.messages.getString("sites.panel.title"));
-		this.setDefaultAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask() | KeyEvent.SHIFT_DOWN_MASK, false));
+		this.setDefaultAccelerator(getView().getMenuShortcutKeyStroke(KeyEvent.VK_S, KeyEvent.SHIFT_DOWN_MASK, false));
 		this.setMnemonic(Constant.messages.getChar("sites.panel.mnemonic"));
 
 	    if (Model.getSingleton().getOptionsParam().getViewParam().getWmUiHandlingOption() == 0) {
@@ -379,6 +386,32 @@ public class SiteMapPanel extends AbstractPanel {
 			// ZAP: Add custom tree cell renderer.
 	        DefaultTreeCellRenderer renderer = new SiteMapTreeCellRenderer(listeners);
 			treeSite.setCellRenderer(renderer);
+
+			String deleteSiteNode = "zap.delete.sitenode";
+			treeSite.getInputMap().put(getView().getDefaultDeleteKeyStroke(), deleteSiteNode);
+			treeSite.getActionMap().put(deleteSiteNode, new AbstractAction() {
+
+				private static final long serialVersionUID = 1L;
+
+				@Override
+				public void actionPerformed(ActionEvent e) {
+					ExtensionHistory extHistory = Control.getSingleton().getExtensionLoader().getExtension(
+							ExtensionHistory.class);
+					if (extHistory == null || treeSite.getSelectionCount() == 0) {
+						return;
+					}
+
+					int result = View.getSingleton().showConfirmDialog(Constant.messages.getString("sites.purge.warning"));
+					if (result != JOptionPane.YES_OPTION) {
+						return;
+					}
+
+					SiteMap siteMap = Model.getSingleton().getSession().getSiteTree();
+					for (TreePath path : treeSite.getSelectionPaths()) {
+						extHistory.purge(siteMap, (SiteNode) path.getLastPathComponent());
+					}
+				}
+			});
 		}
 		return treeSite;
 	}
@@ -448,13 +481,21 @@ public class SiteMapPanel extends AbstractPanel {
 				    	// They selected a context node, deselect any context
 				    	getTreeSite().clearSelection();
 				    }
+				    TreePath path = treeContext.getClosestPathForLocation(e.getX(), e.getY());
+				    if (path != null && !treeContext.isPathSelected(path)) {
+				        treeContext.setSelectionPath(path);
+				    }
 				    if (e.getClickCount() > 1) {
 				    	// Its a double click - show the relevant context dialog
 					    SiteNode node = (SiteNode) treeContext.getLastSelectedPathComponent();
 					    if (node != null && node.getUserObject() != null) {
 					    	Target target = (Target)node.getUserObject();
-					    	getView().showSessionDialog(Model.getSingleton().getSession(), 
-					    			ContextGeneralPanel.getPanelName(target.getContext()));
+					    	String panelName = ContextGeneralPanel.getPanelName(target.getContext());
+					    	getView().getSessionDialog().expandParamPanelNode(panelName);
+					    	if (getView().getSessionDialog().isParamPanelOrChildSelected(panelName)) {
+					    		panelName = null;
+					    	}
+					    	getView().showSessionDialog(Model.getSingleton().getSession(), panelName);
 					    }
 				    }
 				}

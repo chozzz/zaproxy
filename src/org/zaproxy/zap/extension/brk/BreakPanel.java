@@ -23,7 +23,6 @@ package org.zaproxy.zap.extension.brk;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.EventQueue;
-import java.awt.Toolkit;
 import java.awt.event.KeyEvent;
 
 import javax.swing.BorderFactory;
@@ -34,7 +33,6 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JToggleButton;
 import javax.swing.JToolBar;
-import javax.swing.KeyStroke;
 
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.Constant;
@@ -114,7 +112,7 @@ public class BreakPanel extends AbstractPanel implements Tab, BreakpointManageme
 		
 		this.setIcon(new ImageIcon(BreakPanel.class.getResource("/resource/icon/16/101grey.png")));	// 'grey X' icon
 
-		this.setDefaultAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_B, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask() | KeyEvent.SHIFT_DOWN_MASK, false));
+		this.setDefaultAccelerator(extension.getView().getMenuShortcutKeyStroke(KeyEvent.VK_B, KeyEvent.SHIFT_DOWN_MASK, false));
 		this.setMnemonic(Constant.messages.getChar("brk.panel.mnemonic"));
 		
 		this.setLayout(new BorderLayout());
@@ -252,8 +250,11 @@ public class BreakPanel extends AbstractPanel implements Tab, BreakpointManageme
 	
 	@Override
 	public void breakpointDisplayed () {
+		if (! View.getSingleton().isCanGetFocus()) {
+			return;
+		}
 		final Boolean alwaysOnTopOption = breakpointsParams.getAlwaysOnTop();
-		if (alwaysOnTopOption == null || alwaysOnTopOption.booleanValue()) {
+		if (alwaysOnTopOption == null || alwaysOnTopOption) {
 		
 			java.awt.EventQueue.invokeLater(new Runnable() {
 				@Override
@@ -269,7 +270,7 @@ public class BreakPanel extends AbstractPanel implements Tab, BreakpointManageme
 						boolean keepOn = View.getSingleton().showConfirmDialog(
 								Constant.messages.getString("brk.alwaysOnTop.message")) ==
 									JOptionPane.OK_OPTION;
-						breakpointsParams.setAlwaysOnTop(Boolean.valueOf(keepOn));
+						breakpointsParams.setAlwaysOnTop(keepOn);
 						if (! keepOn) {
 							// Turn it off
 							View.getSingleton().getMainFrame().setAlwaysOnTop(false);
@@ -461,7 +462,7 @@ public class BreakPanel extends AbstractPanel implements Tab, BreakpointManageme
 
 	@Override
 	public void step() {
-		breakToolbarFactory.setStep(true);
+		breakToolbarFactory.step();
 	}
 	
 	@Override
@@ -474,7 +475,7 @@ public class BreakPanel extends AbstractPanel implements Tab, BreakpointManageme
 
 	@Override
 	public void drop() {
-		breakToolbarFactory.setDrop(true);
+		breakToolbarFactory.drop();
 	}
 
 	public void showNewBreakPointDialog() {

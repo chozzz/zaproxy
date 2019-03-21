@@ -49,7 +49,9 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
 
+import org.apache.commons.configuration.Configuration;
 import org.apache.commons.configuration.ConfigurationException;
+import org.apache.commons.configuration.FileConfiguration;
 import org.apache.commons.configuration.HierarchicalConfiguration;
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.Constant;
@@ -62,6 +64,7 @@ import org.zaproxy.zap.Version;
 import org.zaproxy.zap.control.AddOn.AddOnRunRequirements;
 import org.zaproxy.zap.control.AddOn.ExtensionRunRequirements;
 import org.zaproxy.zap.extension.pscan.PluginPassiveScanner;
+import org.zaproxy.zap.utils.ZapXmlConfiguration;
 
 /**
  * This class is heavily based on the original Paros class org.parosproxy.paros.common.DynamicLoader
@@ -94,6 +97,10 @@ public class AddOnLoader extends URLClassLoader {
 	
     private static final Logger logger = Logger.getLogger(AddOnLoader.class);
 
+    static {
+        ClassLoader.registerAsParallelCapable();
+    }
+
     private Lock installationLock = new ReentrantLock();
     private AddOnCollection aoc = null;
     private List<File> jars = new ArrayList<>();
@@ -122,9 +129,26 @@ public class AddOnLoader extends URLClassLoader {
      */
     private Map<String, AddOnClassLoader> addOnLoaders = new HashMap<>();
 
+    /**
+     * File where the data of runnable state and blocked add-ons is saved.
+     */
+    private ZapXmlConfiguration addOnsStateConfig;
+
     public AddOnLoader(File[] dirs) {
         super(new URL[0], AddOnLoader.class.getClassLoader());
         
+        addOnsStateConfig = new ZapXmlConfiguration();
+        addOnsStateConfig.setRootElementName("addonsstate");
+        File configFile = new File(Constant.getZapHome(), "add-ons-state.xml");
+        addOnsStateConfig.setFile(configFile);
+        if (!migrateOldAddOnsState(addOnsStateConfig) && configFile.exists()) {
+            try {
+                addOnsStateConfig.load();
+            } catch (ConfigurationException e) {
+                logger.warn("Failed to read add-ons' state file:", e);
+            }
+        }
+
         this.loadBlockList();
 
         this.aoc = new AddOnCollection(dirs);
@@ -169,7 +193,7 @@ public class AddOnLoader extends URLClassLoader {
     private void loadAllAddOns() {
         runnableAddOns = new HashMap<>();
         idsAddOnsWithRunningIssuesSinceLastRun = new ArrayList<>();
-        Map<AddOn, AddOnRunState> oldRunnableAddOns = loadAddOnsRunState(aoc);
+        Map<AddOn, AddOnRunState> oldRunnableAddOns = loadAddOnsRunState(addOnsStateConfig, aoc);
         List<AddOn> runAddons = new ArrayList<>();
         Set<AddOn> updatedAddOns = new HashSet<>();
         for (Iterator<AddOn> iterator = aoc.getAddOns().iterator(); iterator.hasNext();) {
@@ -215,6 +239,7 @@ public class AddOnLoader extends URLClassLoader {
             if (updatedAddOns.contains(addOn)) {
                 AddOnInstaller.updateAddOnFiles(addOnClassLoader, addOn);
             }
+            AddOnInstaller.installResourceBundle(addOnClassLoader, addOn);
         }
     }
 
@@ -270,6 +295,7 @@ public class AddOnLoader extends URLClassLoader {
             if (idsAddOnDependencies.isEmpty()) {
                 addOnClassLoader = new AddOnClassLoader(ao.getFile().toURI().toURL(), this, ao.getAddOnClassnames());
                 this.addOnLoaders.put(ao.getId(), addOnClassLoader);
+                ao.setClassLoader(addOnClassLoader);
                 return addOnClassLoader;
             }
 
@@ -284,6 +310,7 @@ public class AddOnLoader extends URLClassLoader {
 
             addOnClassLoader = new AddOnClassLoader(ao.getFile().toURI().toURL(), this, dependencies, ao.getAddOnClassnames());
             this.addOnLoaders.put(ao.getId(), addOnClassLoader);
+            ao.setClassLoader(addOnClassLoader);
             return addOnClassLoader;
         } catch (MalformedURLException e) {
             logger.error(e.getMessage(), e);
@@ -305,6 +332,13 @@ public class AddOnLoader extends URLClassLoader {
         		} catch (ClassNotFoundException e) {
         			// Continue for now
         		}
+                for (AddOnClassLoader childLoader : loader.getChildClassLoaders()) {
+                    try {
+                        return childLoader.loadClass(name);
+                    } catch (ClassNotFoundException e) {
+                        // Continue for now
+                    }
+                }
             }
             throw new ClassNotFoundException(name);
         }
@@ -341,11 +375,11 @@ public class AddOnLoader extends URLClassLoader {
     		return;
     	}
     	if (! dir.exists()) {
-    		logger.error("No such directory: " + dir.getAbsolutePath());
+    		logger.debug("No such directory: " + dir.getAbsolutePath());
     		return;
     	}
     	if (! dir.isDirectory()) {
-    		logger.error("Not a directory: " + dir.getAbsolutePath());
+    		logger.warn("Not a directory: " + dir.getAbsolutePath());
     		return;
     	}
 
@@ -459,6 +493,9 @@ public class AddOnLoader extends URLClassLoader {
         boolean changed = false;
         for (Entry<String, AddOnClassLoader> entry : new HashMap<>(addOnLoaders).entrySet()) {
             AddOn runningAddOn = aoc.getAddOn(entry.getKey());
+            if (runningAddOn.getInstallationStatus() == AddOn.InstallationStatus.UNINSTALLATION_FAILED) {
+                continue;
+            }
             for (String extClassName : runningAddOn.getExtensionsWithDeps()) {
                 if (!runningAddOn.isExtensionLoaded(extClassName)) {
                     AddOn.AddOnRunRequirements reqs = runningAddOn.calculateExtensionRunRequirements(
@@ -526,7 +563,7 @@ public class AddOnLoader extends URLClassLoader {
 			if (runnableAddOns.remove(ao) != null) {
 			    saveAddOnsRunState(runnableAddOns);
 			}
-			AddOnInstaller.uninstallAddOnFiles(ao, NULL_CALLBACK);
+			AddOnInstaller.uninstallAddOnFiles(ao, NULL_CALLBACK, runnableAddOns.keySet());
 			removeAddOnClassLoader(ao);
 			deleteAddOnFile(ao, upgrading);
 			ao.setInstallationStatus(AddOn.InstallationStatus.UNINSTALLATION_FAILED);
@@ -552,7 +589,7 @@ public class AddOnLoader extends URLClassLoader {
 		unloadDependentExtensions(ao);
 		softUninstallDependentAddOns(ao);
 
-		boolean uninstalledWithoutErrors = AddOnInstaller.uninstall(ao, callback);
+		boolean uninstalledWithoutErrors = AddOnInstaller.uninstall(ao, callback, runnableAddOns.keySet());
 
 		if (uninstalledWithoutErrors && ! this.aoc.removeAddOn(ao)) {
 			uninstalledWithoutErrors = false;
@@ -596,11 +633,12 @@ public class AddOnLoader extends URLClassLoader {
             } catch (Exception e) {
                 logger.error("Failure while closing class loader of " + addOn.getId() + " add-on:", e);
             }
+            addOn.setClassLoader(null);
         }
     }
 
     private void unloadDependentExtensions(AddOn ao) {
-        boolean changed = true;
+        boolean changed = false;
         for (Entry<String, AddOnClassLoader> entry : new HashMap<>(addOnLoaders).entrySet()) {
             AddOn runningAddOn = aoc.getAddOn(entry.getKey());
             for (Extension ext : runningAddOn.getLoadedExtensionsWithDeps()) {
@@ -657,11 +695,11 @@ public class AddOnLoader extends URLClassLoader {
     }
 
 	private void loadBlockList() {
-	    blockList = loadList(ADDONS_BLOCK_LIST);
+		blockList = loadList(addOnsStateConfig, ADDONS_BLOCK_LIST);
 	}
 	
 	private void saveBlockList() {
-		saveList(ADDONS_BLOCK_LIST, this.blockList);
+		saveList(addOnsStateConfig, ADDONS_BLOCK_LIST, this.blockList);
 	}
 
     private <T> List<ClassNameWrapper> getClassNames (String packageName, Class<T> classType) {
@@ -817,10 +855,36 @@ public class AddOnLoader extends URLClassLoader {
 		return Collections.unmodifiableList(list);
 	}
 
+	/**
+	 * Gets a list of classes that implement the given type in the given package.
+	 * <p>
+	 * It searches in the dependencies, add-ons, and the ZAP JAR.
+	 *
+	 * @param packageName the name of the package that the classes must be in.
+	 * @param classType the type of the classes.
+	 * @return a list with the classes that implement the given type, never {@code null}.
+	 * @deprecated (TODO add version) The use of this method is discouraged (specially during ZAP startup, as it's delayed),
+	 *             it's preferable to provide means to register/declare the required classes instead of searching "everywhere".
+	 */
+	@Deprecated
 	public <T> List<T> getImplementors (String packageName, Class<T> classType) {
 		return this.getImplementors(null, packageName, classType);
     }
 
+	/**
+	 * Gets a list of classes that implement the given type in the given package.
+	 * <p>
+	 * It searches in the given add-on, if not {@code null}, otherwise it searches in the dependencies, add-ons, and the ZAP
+	 * JAR.
+	 *
+	 * @param ao the add-on to search in, might be {@code null}.
+	 * @param packageName the name of the package that the classes must be in.
+	 * @param classType the type of the classes.
+	 * @return a list with the classes that implement the given type, never {@code null}.
+	 * @deprecated (TODO add version) The use of this method is discouraged (specially during ZAP startup, as it's delayed),
+	 *             it's preferable to provide means to register/declare the required classes instead of searching "everywhere".
+	 */
+	@Deprecated
 	public <T> List<T> getImplementors (AddOn ao, String packageName, Class<T> classType) {
         Class<?> cls = null;
         List<T> listClass = new ArrayList<>();
@@ -1010,9 +1074,9 @@ public class AddOnLoader extends URLClassLoader {
     	
     }
 
-    private static List<String> loadList(String key) {
+    private static List<String> loadList(Configuration config, String key) {
         List<String> data = new ArrayList<>();
-        String blockStr = Model.getSingleton().getOptionsParam().getConfig().getString(key, null);
+        String blockStr = config.getString(key, null);
         if (blockStr != null && blockStr.length() > 0) {
             for (String str : blockStr.split(",")) {
                 data.add(str);
@@ -1021,7 +1085,7 @@ public class AddOnLoader extends URLClassLoader {
         return data;
     }
 
-    private static void saveList(String key, List<String> list) {
+    private static void saveList(FileConfiguration config, String key, List<String> list) {
         StringBuilder sb = new StringBuilder();
 
         for (String id: list) {
@@ -1031,18 +1095,16 @@ public class AddOnLoader extends URLClassLoader {
             sb.append(id);
         }
 
-        Model.getSingleton().getOptionsParam().getConfig().setProperty(key, sb.toString());
+        config.setProperty(key, sb.toString());
         try {
-            Model.getSingleton().getOptionsParam().getConfig().save();
+            config.save();
         } catch (ConfigurationException e) {
             logger.error("Failed to save list [" + key + "]: " + sb.toString(), e);
         }
     }
 
-    private static Map<AddOn, AddOnRunState> loadAddOnsRunState(AddOnCollection addOnCollection) {
-        List<HierarchicalConfiguration> savedAddOns = ((HierarchicalConfiguration) Model.getSingleton()
-                .getOptionsParam()
-                .getConfig()).configurationsAt(ADDONS_RUNNABLE_KEY);
+    private static Map<AddOn, AddOnRunState> loadAddOnsRunState(HierarchicalConfiguration config, AddOnCollection addOnCollection) {
+        List<HierarchicalConfiguration> savedAddOns = config.configurationsAt(ADDONS_RUNNABLE_KEY);
 
         Map<AddOn, AddOnRunState> runnableAddOns = new HashMap<>();
         for (HierarchicalConfiguration savedAddOn : savedAddOns) {
@@ -1107,33 +1169,69 @@ public class AddOnLoader extends URLClassLoader {
         return null;
     }
 
-    private static void saveAddOnsRunState(Map<AddOn, List<String>> runnableAddOns) {
-        HierarchicalConfiguration config = (HierarchicalConfiguration) Model.getSingleton().getOptionsParam().getConfig();
-        config.clearTree(ADDONS_RUNNABLE_BASE_KEY);
+    private void saveAddOnsRunState(Map<AddOn, List<String>> runnableAddOns) {
+        addOnsStateConfig.clearTree(ADDONS_RUNNABLE_BASE_KEY);
 
         int i = 0;
         for (Map.Entry<AddOn, List<String>> runnableAddOnEntry : runnableAddOns.entrySet()) {
             String elementBaseKey = ADDONS_RUNNABLE_KEY + "(" + i + ").";
             AddOn addOn = runnableAddOnEntry.getKey();
 
-            config.setProperty(elementBaseKey + ADDON_RUNNABLE_ID_KEY, addOn.getId());
-            config.setProperty(elementBaseKey + ADDON_RUNNABLE_FULL_VERSION_KEY, addOn.getVersion());
+            addOnsStateConfig.setProperty(elementBaseKey + ADDON_RUNNABLE_ID_KEY, addOn.getId());
+            addOnsStateConfig.setProperty(elementBaseKey + ADDON_RUNNABLE_FULL_VERSION_KEY, addOn.getVersion());
             // For older ZAP versions, which can't read the semantic version, just an integer.
-            config.setProperty(elementBaseKey + ADDON_RUNNABLE_VERSION_KEY, addOn.getVersion().getMajorVersion());
+            addOnsStateConfig.setProperty(elementBaseKey + ADDON_RUNNABLE_VERSION_KEY, addOn.getVersion().getMajorVersion());
 
             String extensionBaseKey = elementBaseKey + ADDON_RUNNABLE_ALL_EXTENSIONS_KEY;
             for (String extension : runnableAddOnEntry.getValue()) {
-                config.addProperty(extensionBaseKey, extension);
+                addOnsStateConfig.addProperty(extensionBaseKey, extension);
             }
 
             i++;
         }
 
         try {
-            Model.getSingleton().getOptionsParam().getConfig().save();
+            addOnsStateConfig.save();
         } catch (ConfigurationException e) {
             logger.error("Failed to save state of runnable add-ons:", e);
         }
+    }
+
+    private static boolean migrateOldAddOnsState(ZapXmlConfiguration newConfig) {
+        boolean dataMigrated = false;
+        HierarchicalConfiguration oldConfig = (HierarchicalConfiguration) Model.getSingleton().getOptionsParam().getConfig();
+
+        if (oldConfig.containsKey(ADDONS_BLOCK_LIST)) {
+            List<String> blockList = loadList(oldConfig, ADDONS_BLOCK_LIST);
+            oldConfig.clearProperty(ADDONS_BLOCK_LIST);
+            saveList(newConfig, ADDONS_BLOCK_LIST, blockList);
+            dataMigrated = true;
+        }
+
+        List<HierarchicalConfiguration> oldAddOnsState = oldConfig.configurationsAt(ADDONS_RUNNABLE_KEY);
+        if (!oldAddOnsState.isEmpty()) {
+            int i = 0;
+            for (HierarchicalConfiguration savedAddOn : oldAddOnsState) {
+                String elementBaseKey = ADDONS_RUNNABLE_KEY + "(" + i + ").";
+                newConfig.setProperty(elementBaseKey + ADDON_RUNNABLE_ID_KEY, savedAddOn.getString(ADDON_RUNNABLE_ID_KEY, ""));
+                String version = savedAddOn.getString(ADDON_RUNNABLE_FULL_VERSION_KEY, "");
+                if (version.isEmpty()) {
+                    newConfig.setProperty(
+                            elementBaseKey + ADDON_RUNNABLE_VERSION_KEY,
+                            savedAddOn.getString(ADDON_RUNNABLE_VERSION_KEY, ""));
+                } else {
+                    newConfig.setProperty(elementBaseKey + ADDON_RUNNABLE_FULL_VERSION_KEY, version);
+                }
+
+                String extensionBaseKey = elementBaseKey + ADDON_RUNNABLE_ALL_EXTENSIONS_KEY;
+                for (String extension : savedAddOn.getStringArray(ADDON_RUNNABLE_ALL_EXTENSIONS_KEY)) {
+                    newConfig.addProperty(extensionBaseKey, extension);
+                }
+            }
+            oldConfig.clearTree(ADDONS_RUNNABLE_KEY);
+            dataMigrated = true;
+        }
+        return dataMigrated;
     }
 
     /**

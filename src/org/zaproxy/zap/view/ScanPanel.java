@@ -595,7 +595,7 @@ public abstract class ScanPanel extends AbstractPanel {
 		}
                 // does site already contain port number ?
                 if(site.indexOf(":")>=0) {
-                    if (! incPort) { // We dont't want the port number, strip it off
+                    if (! incPort) { // We don't want the port number, strip it off
 			site = site.substring(0, site.indexOf(":"));
                     } // otherwise keep it                   
                 } else { // The site does not contain the port number
@@ -623,7 +623,7 @@ public abstract class ScanPanel extends AbstractPanel {
 	
 	protected SiteNode getSiteNode (String siteName) {
 		SiteMap siteTree = this.getExtension().getModel().getSession().getSiteTree();
-		SiteNode rootNode = (SiteNode) siteTree.getRoot();
+		SiteNode rootNode = siteTree.getRoot();
 		
 		@SuppressWarnings("unchecked")
 		Enumeration<TreeNode> en = rootNode.children();

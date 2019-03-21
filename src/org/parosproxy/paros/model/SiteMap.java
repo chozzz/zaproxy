@@ -54,6 +54,10 @@
 // ZAP: 2017/06/29: Issue 3714: Added newOnly option to addPath
 // ZAP: 2017/07/09: Issue 3727: Sorting of SiteMap should not include HTTP method (verb) in the node's name
 // ZAP: 2017/11/22 Expose method to create temporary nodes (Issue 4065).
+// ZAP: 2017/12/26 Remove redundant request header null checks.
+// ZAP: 2018/02/07 Set the HistoryReference into the temp node before adding it to the tree (Issue 4356).
+// ZAP: 2018/02/14 Remove unnecessary boxing / unboxing
+// ZAP: 2018/07/09 Override getRoot method
 
 package org.parosproxy.paros.model;
 
@@ -126,7 +130,7 @@ public class SiteMap extends SortedTreeModel {
         SiteNode resultNode = null;
         URI uri = msg.getRequestHeader().getURI();
         
-        SiteNode parent = (SiteNode) getRoot();
+        SiteNode parent = getRoot();
         String folder;
         
         try {
@@ -184,13 +188,13 @@ public class SiteMap extends SortedTreeModel {
     	if (Constant.isLowMemoryOptionSet()) {
     		throw new InvalidParameterException("SiteMap should not be accessed when the low memory option is set");
     	}
-    	if (msg == null || msg.getRequestHeader() == null) {
+    	if (msg == null) {
     		return null;
     	}
         SiteNode resultNode = null;
         URI uri = msg.getRequestHeader().getURI();
         
-        SiteNode parent = (SiteNode) getRoot();
+        SiteNode parent = getRoot();
         String folder = "";
         
         try {
@@ -253,7 +257,7 @@ public class SiteMap extends SortedTreeModel {
         	String host = getHostName(uri);
             
             // no host yet
-            resultNode = findChild((SiteNode) getRoot(), host);
+            resultNode = findChild(getRoot(), host);
             if (resultNode == null) {
                 return null;
         	}
@@ -285,7 +289,7 @@ public class SiteMap extends SortedTreeModel {
      * Find the closest parent for the message - no new nodes will be created
      */
     public synchronized SiteNode findClosestParent(HttpMessage msg) {
-    	if (msg == null || msg.getRequestHeader() == null) {
+    	if (msg == null) {
     		return null;
     	}
     	return this.findClosestParent(msg.getRequestHeader().getURI());
@@ -299,7 +303,7 @@ public class SiteMap extends SortedTreeModel {
     		return null;
     	}
         SiteNode lastParent = null;
-        SiteNode parent = (SiteNode) getRoot();
+        SiteNode parent = getRoot();
         String folder = "";
         
         try {
@@ -384,7 +388,7 @@ public class SiteMap extends SortedTreeModel {
     		throw new InvalidParameterException("SiteMap should not be accessed when the low memory option is set");
     	}
 
-    	if (View.isInitialised() && Constant.isDevBuild() && ! EventQueue.isDispatchThread()) {
+    	if (View.isInitialised() && Constant.isDevMode() && ! EventQueue.isDispatchThread()) {
     		// In developer mode log an error if we're not on the EDT
     		// Adding to the site tree on GUI ('initial') threads causes problems
     		log.error("SiteMap.addPath not on EDT " + Thread.currentThread().getName(), new Exception());
@@ -393,7 +397,7 @@ public class SiteMap extends SortedTreeModel {
         URI uri = msg.getRequestHeader().getURI();
         log.debug("addPath " + uri.toString());
         
-        SiteNode parent = (SiteNode) getRoot();
+        SiteNode parent = getRoot();
         SiteNode leaf = null;
         String folder = "";
         boolean isNew = false;
@@ -463,10 +467,11 @@ public class SiteMap extends SortedTreeModel {
                     break;
                 }
             }
-            insertNodeInto(newNode, parent, pos);
 
             result = newNode;
-            result.setHistoryReference(createReference(result, baseRef, baseMsg));
+            result.setHistoryReference(createReference(createTreeNodePath(parent, newNode), baseRef, baseMsg));
+
+            insertNodeInto(newNode, parent, pos);
 
             // Check if its in or out of scope - has to be done after the node is entered into the tree
             newNode.setIncludedInScope(model.getSession().isIncludedInScope(newNode), true);
@@ -484,6 +489,14 @@ public class SiteMap extends SortedTreeModel {
         return result;
     }
     
+    private static TreeNode[] createTreeNodePath(SiteNode parent, SiteNode child) {
+        TreeNode[] parentPath = parent.getPath();
+        TreeNode[] path = new TreeNode[parentPath.length + 1];
+        System.arraycopy(parentPath, 0, path, 0, parentPath.length);
+        path[path.length - 1] = child;
+        return path;
+    }
+
     private SiteNode findChild(SiteNode parent, String nodeName) {
     	// ZAP: Added debug
     	log.debug("findChild " + parent.getNodeName() + " / " + nodeName);
@@ -633,7 +646,10 @@ public class SiteMap extends SortedTreeModel {
     }
     
     public HistoryReference createReference(SiteNode node, HistoryReference baseRef, HttpMessage base) throws HttpMalformedHeaderException, DatabaseException, URIException, NullPointerException {
-        TreeNode[] path = node.getPath();
+        return createReference(node.getPath(), baseRef, base);
+    }
+
+    private HistoryReference createReference(TreeNode[] path, HistoryReference baseRef, HttpMessage base) throws HttpMalformedHeaderException, DatabaseException, URIException, NullPointerException {
         StringBuilder sb = new StringBuilder();
         String nodeName;
         String uriPath = baseRef.getURI().getPath();
@@ -682,7 +698,7 @@ public class SiteMap extends SortedTreeModel {
     }
     
     public void removeHistoryReference(int historyId) {
-        hrefMap.remove(Integer.valueOf(historyId));
+        hrefMap.remove(historyId);
     }
 
     // returns a representation of the host name in the site map
@@ -714,7 +730,7 @@ public class SiteMap extends SortedTreeModel {
 	 */
 	public void setFilter (SiteTreeFilter filter) {
 		this.filter = filter;
-		SiteNode root = (SiteNode) getRoot();
+		SiteNode root = getRoot();
 		setFilter(filter, root);
 		// Never filter the root node
 		root.setFiltered(false);
@@ -737,7 +753,7 @@ public class SiteMap extends SortedTreeModel {
 	 */
 	public void clearFilter () {
 		this.filter = null;
-		clearFilter((SiteNode) getRoot());
+		clearFilter(getRoot());
 	}
 	
 	private void clearFilter (SiteNode node) {
@@ -818,6 +834,11 @@ public class SiteMap extends SortedTreeModel {
 	 */
 	private static void publishEvent(String event, SiteNode node) {
 		ZAP.getEventBus().publishSyncEvent(SiteMapEventPublisher.getPublisher(), new Event(SiteMapEventPublisher.getPublisher(), event, new Target(node)));
+	}
+
+	@Override
+	public SiteNode getRoot() {
+		return (SiteNode)this.root;
 	}
 }
 

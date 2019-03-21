@@ -132,7 +132,15 @@ public class ActiveScan extends org.parosproxy.paros.core.scanner.Scanner implem
 		}
 		return total;
 	}
-	
+
+	public int getTotalNewAlerts() {
+		int totalNewAlerts = 0;
+		for (HostProcess process : this.getHostProcesses()) {
+			totalNewAlerts += process.getNewAlertCount();
+		}
+		return totalNewAlerts;
+	}
+
 	public ResponseCountSnapshot getRequestHistory() {
 		if (this.rcHistory.size() > 0) {
 			try {
@@ -194,7 +202,7 @@ public class ActiveScan extends org.parosproxy.paros.core.scanner.Scanner implem
 	public void alertFound(Alert alert) {
 		int alertId = alert.getAlertId();
 		if (alertId != -1) {
-			alerts.add(Integer.valueOf(alert.getAlertId()));
+			alerts.add(alert.getAlertId());
 		}
 	}
 
@@ -214,7 +222,11 @@ public class ActiveScan extends org.parosproxy.paros.core.scanner.Scanner implem
 		for (HostProcess process : this.getHostProcesses()) {
 			tot += process.getPercentageComplete();
 		}
-		this.progress = tot / this.getHostProcesses().size();
+		int latestProgress = tot / this.getHostProcesses().size();
+		if (latestProgress != this.progress) {
+			this.progress = latestProgress;
+			ActiveScanEventPublisher.publishScanProgressEvent(this.getId(), this.progress);
+		}
 	}
 	
 	/**
@@ -253,12 +265,12 @@ public class ActiveScan extends org.parosproxy.paros.core.scanner.Scanner implem
 						HistoryReference.TYPE_SCANNER_TEMPORARY,
 						msg);
 				msg.setHistoryRef(null);
-				hRefs.add(Integer.valueOf(hRef.getHistoryId()));
+				hRefs.add(hRef.getHistoryId());
 			} catch (HttpMalformedHeaderException | DatabaseException e) {
 				log.error(e.getMessage(), e);
 			}
 		} else {
-			hRefs.add(Integer.valueOf(hRef.getHistoryId()));
+			hRefs.add(hRef.getHistoryId());
 		}
 		
 		this.rcTotals.incResponseCodeCount(msg.getResponseHeader().getStatusCode());

@@ -32,6 +32,9 @@
 // ZAP: 2016/06/17 Remove redundant initialisations of instance variables
 // ZAP: 2017/03/21 Add method to check if response type is json (isJson())
 // ZAP: 2017/11/10 Allow to set the status code and reason.
+// ZAP: 2018/02/06 Make the lower/upper case changes locale independent (Issue 4327).
+// ZAP: 2018/07/23 Add CSP headers.
+// ZAP: 2018/08/15 Add Server header.
 
 package org.parosproxy.paros.network;
 
@@ -40,6 +43,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.TreeSet;
 import java.util.Vector;
 import java.util.regex.Matcher;
@@ -48,6 +52,41 @@ import java.util.regex.Pattern;
 import org.apache.log4j.Logger;
 
 public class HttpResponseHeader extends HttpHeader {
+
+    /**
+     * The {@code Content-Security-Policy} response header.
+     * 
+     * @since TODO add version
+     */
+    public static final String CSP = "Content-Security-Policy";
+
+    /**
+     * The {@code Content-Security-Policy-Report-Only} response header.
+     * 
+     * @since TODO add version
+     */
+    public static final String CSP_REPORT_ONLY = "Content-Security-Policy-Report-Only";
+
+    /**
+     * The {@code X-Content-Security-Policy} response header.
+     * 
+     * @since TODO add version
+     */
+    public static final String XCSP = "X-Content-Security-Policy";
+
+    /**
+     * The {@code X-WebKit-CSP} response header.
+     * 
+     * @since TODO add version
+     */
+    public static final String WEBKIT_CSP = "X-WebKit-CSP";
+
+    /**
+     * The {@code Server} response header.
+     * 
+     * @since TODO add version
+     */
+    public static final String SERVER = "Server";
 
 	private static final long serialVersionUID = 2812716126742059785L;
     private static final Logger log = Logger.getLogger(HttpResponseHeader.class);
@@ -101,7 +140,7 @@ public class HttpResponseHeader extends HttpHeader {
 	
     @Override
 	public void setVersion(String version) {
-		mVersion = version.toUpperCase();
+		mVersion = version.toUpperCase(Locale.ROOT);
 	}
 
     /**
@@ -206,84 +245,37 @@ public class HttpResponseHeader extends HttpHeader {
 
 	@Override
 	public boolean isImage() {
-		String contentType = getHeader(CONTENT_TYPE.toUpperCase());
-
-		if (contentType != null) {
-			if (contentType.toLowerCase().indexOf(_CONTENT_TYPE_IMAGE) > -1) {
-				return true;
-			}
-		}
-		return false;
+		return hasContentType(_CONTENT_TYPE_IMAGE);
 	}
 
 	@Override
 	public boolean isText() {
-		String contentType = getHeader(CONTENT_TYPE.toUpperCase());
-
-		if (contentType != null) {
-			if (contentType.toLowerCase().indexOf(_CONTENT_TYPE_TEXT) > -1) {
-				return true;
-			} else if (contentType.toLowerCase().indexOf(_CONTENT_TYPE_HTML) > -1) {
-				return true;
-			} else if (contentType.toLowerCase().indexOf(_CONTENT_TYPE_JAVASCRIPT) > -1) {
-				return true;
-			} else if (contentType.toLowerCase().indexOf(_CONTENT_TYPE_JSON) > -1) {
-				return true;
-			} else if (contentType.toLowerCase().indexOf(_CONTENT_TYPE_XML) > -1) { 
-				return true; 
-			}
-
-		}
-		return false;
+		return hasContentType(
+				_CONTENT_TYPE_TEXT,
+				_CONTENT_TYPE_HTML,
+				_CONTENT_TYPE_JAVASCRIPT,
+				_CONTENT_TYPE_JSON,
+				_CONTENT_TYPE_XML);
 	}
 	
 	public boolean isHtml() {
-		String contentType = getHeader(CONTENT_TYPE.toUpperCase());
-
-		if (contentType != null) {
-			if (contentType.toLowerCase().indexOf(_CONTENT_TYPE_HTML) > -1) {
-				return true;
-			}
-		}
-		return false;
+		return hasContentType(_CONTENT_TYPE_HTML);
 		
 	}
 	
-	// ZAP: Added method
 	public boolean isXml() {
-		String contentType = getHeader(CONTENT_TYPE.toUpperCase());
-
-		if (contentType != null) {
-			if (contentType.toLowerCase().indexOf(_CONTENT_TYPE_XML) > -1) {
-				return true;
-			}
-		}
-		return false;
+		return hasContentType(_CONTENT_TYPE_XML);
 		
 	}
 	
 	public boolean isJson() {
-		String contentType = getHeader(CONTENT_TYPE.toUpperCase());
-
-		if (contentType != null) {
-			if (contentType.toLowerCase().indexOf(_CONTENT_TYPE_JSON) > -1) {
-				return true;
-			}
-		}
-		return false;
+		return hasContentType(_CONTENT_TYPE_JSON);
 		
 	}
 
 	
 	public boolean isJavaScript() {
-		String contentType = getHeader(CONTENT_TYPE.toUpperCase());
-
-		if (contentType != null) {
-			if (contentType.toLowerCase().indexOf(_CONTENT_TYPE_JAVASCRIPT) > -1) {
-				return true;
-			}
-		}
-		return false;
+		return hasContentType(_CONTENT_TYPE_JAVASCRIPT);
 	}
 
 	public static boolean isStatusLine(String data) {
@@ -343,7 +335,7 @@ public class HttpResponseHeader extends HttpHeader {
 		} catch (IllegalArgumentException e) {
 			if (c.indexOf(',') >= 0) {
 				try {
-					// Some sites seem to use comma separators, which HttpCookie doesnt like, try replacing them
+					// Some sites seem to use comma separators, which HttpCookie doesn't like, try replacing them
 					List<HttpCookie> parsedCookies = HttpCookie.parse(c.replace(',', ';'));
 					if (defaultDomain != null) {
 						for (HttpCookie cookie : parsedCookies) {

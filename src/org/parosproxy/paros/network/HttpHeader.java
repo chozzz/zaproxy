@@ -36,12 +36,15 @@
 // ZAP: 2016/06/17 Remove redundant initialisations of instance variables
 // ZAP: 2017/02/08 Change isEmpty to check start line instead of headers (if it has the status/request line it's not empty).
 // ZAP: 2017/03/02 Issue 3226: Added API Key and Nonce headers
+// ZAP: 2018/02/06 Make the lower/upper case changes locale independent (Issue 4327).
+// ZAP: 2018/04/24 Add JSON Content-Type.
 
 package org.parosproxy.paros.network;
 
 import java.util.ArrayList;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.Locale;
 import java.util.Vector;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -86,6 +89,7 @@ public abstract class HttpHeader implements java.io.Serializable {
     public static final String _KEEP_ALIVE = "Keep-Alive";
     public static final String _CHUNKED = "Chunked";
     public static final String FORM_URLENCODED_CONTENT_TYPE = "application/x-www-form-urlencoded";
+    public static final String JSON_CONTENT_TYPE = "application/json";
     public static final String SCHEME_HTTP = "http://";
     public static final String SCHEME_HTTPS = "https://";
     public static final String HTTP = "http";
@@ -187,7 +191,7 @@ public abstract class HttpHeader implements java.io.Serializable {
 
     /**
      * Get the first header value using the name given. If there are multiple
-     * occurence, only the first one will be returned as String.
+     * occurrence, only the first one will be returned as String.
      *
      * @param name
      * @return the header value. null if not found.
@@ -208,8 +212,7 @@ public abstract class HttpHeader implements java.io.Serializable {
      * @return a vector holding the value as string.
      */
     public Vector<String> getHeaders(String name) {
-        Vector<String> v = mHeaderFields.get(name.toUpperCase());
-        return v;
+        return mHeaderFields.get(normalisedHeaderName(name));
     }
 
     public List<HttpHeaderField> getHeaders() {
@@ -456,7 +459,7 @@ public abstract class HttpHeader implements java.io.Serializable {
      * @param value
      */
     private void replaceInternalHeaderFields(String name, String value) {
-        String key = name.toUpperCase();
+        String key = normalisedHeaderName(name);
         Vector<String> v = getHeaders(key);
         if (v == null) {
             v = new Vector<>();
@@ -478,7 +481,7 @@ public abstract class HttpHeader implements java.io.Serializable {
      * @param value
      */
     private void addInternalHeaderFields(String name, String value) {
-        String key = name.toUpperCase();
+        String key = normalisedHeaderName(name);
         Vector<String> v = getHeaders(key);
         if (v == null) {
             v = new Vector<>();
@@ -490,6 +493,18 @@ public abstract class HttpHeader implements java.io.Serializable {
         } else {
             mHeaderFields.remove(key);
         }
+    }
+
+    /**
+     * Gets the header name normalised, to obtain the value(s) from {@link #mHeaderFields}.
+     * <p>
+     * The normalisation is done by changing all characters to upper case.
+     *
+     * @param name the name of the header to normalise.
+     * @return the normalised header name.
+     */
+    private static String normalisedHeaderName(String name) {
+        return name.toUpperCase(Locale.ROOT);
     }
 
     /**
@@ -532,6 +547,52 @@ public abstract class HttpHeader implements java.io.Serializable {
      */
     public boolean isText() {
         return true;
+    }
+
+    /**
+     * Tells whether or not the HTTP header contains any of the given {@code Content-Type} values.
+     * <p>
+     * The values are expected to be in lower case.
+     *
+     * @param contentTypes the values to check.
+     * @return {@code true} if any of the given values is contained in the (first) {@code Content-Type} header, {@code false}
+     *         otherwise.
+     * @since TODO add version
+     * @see #getNormalisedContentTypeValue()
+     */
+    public boolean hasContentType(String... contentTypes) {
+        if (contentTypes == null || contentTypes.length == 0) {
+            return true;
+        }
+
+        String normalisedContentType = getNormalisedContentTypeValue();
+        if (normalisedContentType == null) {
+            return false;
+        }
+
+        for (String contentType : contentTypes) {
+            if (normalisedContentType.contains(contentType)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Gets the normalised value of the (first) {@code Content-Type} header.
+     * <p>
+     * The normalisation is done by changing all characters to lower case.
+     * 
+     * @return the value normalised, might be {@code null}.
+     * @since TODO add version
+     * @see #hasContentType(String...)
+     */
+    public String getNormalisedContentTypeValue() {
+        String contentType = getHeader(CONTENT_TYPE);
+        if (contentType != null) {
+            return contentType.toLowerCase(Locale.ROOT);
+        }
+        return null;
     }
 
     /**

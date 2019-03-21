@@ -34,10 +34,13 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.util.Observable;
+import java.net.URL;
 import java.util.Vector;
 
 import javax.swing.JOptionPane;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
+import javax.swing.event.EventListenerList;
 
 import org.apache.log4j.Logger;
 import org.jdom.Document;
@@ -46,8 +49,9 @@ import org.jdom.JDOMException;
 import org.jdom.input.SAXBuilder;
 import org.jdom.output.XMLOutputter;
 
-public class DriverConfiguration extends Observable {
+public class DriverConfiguration {
 	private File file = null;
+	private URL url;
 
 	private Vector<String> names;
 	private Vector<String> paths;
@@ -56,15 +60,28 @@ public class DriverConfiguration extends Observable {
 
 	private final Logger logger = Logger.getLogger(this.getClass());
 
+	private EventListenerList eventListeners = new EventListenerList();
+	private ChangeEvent changeEvent;
+
+	public DriverConfiguration(URL url) {
+		this.url = url;
+		load();
+	}
+
 	public DriverConfiguration(File file) {
 		this.file = file;
+		load();
+	}
+
+	private void load() {
 		names = new Vector<String>();
 		paths = new Vector<String>();
 		slots = new Vector<Integer>();
 		slotListIndexes = new Vector<Integer>();
 
 		try {
-			final Document doc = new SAXBuilder().build(file);
+			SAXBuilder builder = new SAXBuilder();
+			final Document doc = file != null ? builder.build(file) : builder.build(url);
 			final Element root = doc.getRootElement();
 			for (final Object o : root.getChildren("driver")) {
 				final Element nameElement = ((Element) o).getChild("name");
@@ -118,6 +135,11 @@ public class DriverConfiguration extends Observable {
 	}
 
 	public void write() {
+		if (file == null) {
+			fireStateChanged();
+			return;
+		}
+
 		final Document doc = new Document();
 		final Element root = new Element("driverConfiguration");
 		doc.addContent(root);
@@ -144,11 +166,9 @@ public class DriverConfiguration extends Observable {
 			slotListIndex.addContent(slotListIndexes.get(i).toString());
 		}
 
-		try {
-			final OutputStream fileOutputStream = new BufferedOutputStream(new FileOutputStream(file));
+		try (OutputStream fileOutputStream = new BufferedOutputStream(new FileOutputStream(file))) {
 			final XMLOutputter out = new XMLOutputter();
 			out.output(doc, fileOutputStream);
-			fileOutputStream.close();
 		} catch (final FileNotFoundException e) {
 			JOptionPane.showMessageDialog(null, new String[] {
 					"Error accessing key store: ", e.toString() }, "Error",
@@ -160,8 +180,20 @@ public class DriverConfiguration extends Observable {
 					JOptionPane.ERROR_MESSAGE);
 			logger.error(e.getMessage(), e);
 		}
-		setChanged();
-		notifyObservers();
+		
+		fireStateChanged();
+	}
+
+	private void fireStateChanged() {
+		Object[] listeners = eventListeners.getListenerList();
+		for (int i = listeners.length - 2; i >= 0; i -= 2) {
+			if (listeners[i] == ChangeListener.class) {
+				if (changeEvent == null) {
+					changeEvent = new ChangeEvent(this);
+				}
+				((ChangeListener) listeners[i + 1]).stateChanged(changeEvent);
+			}
+		}
 	}
 
 	public Vector<String> getNames() {
@@ -196,4 +228,11 @@ public class DriverConfiguration extends Observable {
 		this.slotListIndexes = slotListIndexes;
 	}
 
+	public void addChangeListener(ChangeListener listener) {
+		eventListeners.add(ChangeListener.class, listener);
+	}
+
+	public void removeChangeListener(ChangeListener listener) {
+		eventListeners.remove(ChangeListener.class, listener);
+	}
 }

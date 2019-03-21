@@ -35,6 +35,8 @@
 // ZAP: 2017/02/17 Expose ExtensionHook to allow core code remove/unhook the extension.
 // ZAP: 2017/05/22 Use Class<? extends Extension> for dependencies of the extension.
 // ZAP: 2017/05/25 Add JavaDoc to isEnabled/setEnabled.
+// ZAP: 2018/06/01 Add JavaDoc to getMessages/setMessages.
+// ZAP: 2018/10/09 Remove getExtensionHook and add JavaDoc to hook.
 
 package org.parosproxy.paros.extension;
 
@@ -140,19 +142,13 @@ public interface Extension {
      */
     void initXML(Session session, OptionsParam options);
     
-    void hook(ExtensionHook pluginHook);
-
     /**
-     * Gets the {@code ExtensionHook} used to hook the components during initialisation.
-     * <p>
-     * Should be called only by core functionality (e.g. to unload the hooked components).
-     * 
-     * @return the {@code ExtensionHook} used to hook the components.
-     * @since 2.6.0
-     * @see #hook(ExtensionHook)
+     * Called during extension's initialisation to allow to add new functionality to core components.
+     *
+     * @param hook the hook to add the components.
      */
-    ExtensionHook getExtensionHook();
-    
+    void hook(ExtensionHook hook);
+
     boolean isDepreciated ();
     
     int getOrder();
@@ -191,8 +187,29 @@ public interface Extension {
 	
 	URL getURL ();
 
+	/**
+	 * Gets the resource bundle of the extension.
+	 * <p>
+	 * Set during start up based on the available resource bundles:
+	 * <ol>
+	 * <li>extension's resource bundle, located in the {@code resources} directory under the extension's package;</li>
+	 * <li>add-on's resource bundle;</li>
+	 * <li>core resource bundle;</li>
+	 * </ol>
+	 *
+	 * @return the resource bundle, never {@code null}.
+	 * @since 2.0.0
+	 */
 	ResourceBundle getMessages();
 	
+	/**
+	 * Sets the resource bundle of the extension.
+	 * <p>
+	 * <strong>Note:</strong> This method should be called only by bootstrap classes.
+	 *
+	 * @param messages the resource bundle of the extension.
+	 * @since 2.0.0
+	 */
 	void setMessages(ResourceBundle messages);
 	
 	String getI18nPrefix ();

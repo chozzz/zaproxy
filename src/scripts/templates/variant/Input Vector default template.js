@@ -17,19 +17,18 @@ function parseParameters(helper, msg) {
 
     // Sample scan of a query string object
     // searching for Base64 encoded parameters
-    query = msg.getRequestHeader().getURI().getEscapedQuery();
+    var query = msg.getRequestHeader().getURI().getEscapedQuery();
 
     if (query == null) {
         return;
     }
 
-    vars = query.split("&");
-    nob64 = "";
+    var vars = query.split("&");
     for (var i = 0; i < vars.length; i++) {
-        pair = vars[i].split("=");
+        var pair = vars[i].split("=");
 
         if (helper.isBase64(decodeURIComponent(pair[1]))) {
-            value = helper.decodeBase64(decodeURIComponent(pair[1]));
+            var value = helper.decodeBase64(decodeURIComponent(pair[1]));
             helper.addParamQuery(pair[0], value);
             paramStates.push(B64STATE);
         } else {
@@ -40,15 +39,16 @@ function parseParameters(helper, msg) {
 }
 
 function setParameter(helper, msg, param, value, escaped) {
-    size = helper.getParamNumber();
-    query = "";
+    var size = helper.getParamNumber();
+    var query = "";
+    var pos = helper.getCurrentParam().getPosition();
 
     for (var i = 0; i < size; i++) {
-        pname = helper.getParamName(i);
-        pvalue = helper.getParamValue(i);
+        var pname = helper.getParamName(i);
+        var pvalue = helper.getParamValue(i);
 
         if (paramStates[i] === B64STATE) { //Handle values that were originally base64
-            if (pname == param) {
+            if (i == pos) {
                 //Encode the injected value
                 pvalue = encodeURIComponent(helper.encodeBase64(value));
             } else {
@@ -56,13 +56,11 @@ function setParameter(helper, msg, param, value, escaped) {
                 pvalue = encodeURIComponent(helper.encodeBase64(pvalue));
             }
         } else { //Handle regular values
-            if (pname == param) {
+            if (i == pos) {
                 if (escaped == false) {
                     value = encodeURIComponent(value);
                 }
                 pvalue = value;
-            } else {
-                pvalue = pvalue;
             }
         }
         query = pname + "=" + pvalue + "&" + query;

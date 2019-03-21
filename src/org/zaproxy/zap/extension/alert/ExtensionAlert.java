@@ -39,6 +39,7 @@ import java.util.Vector;
 import javax.swing.JTree;
 import javax.swing.tree.TreePath;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.control.Control;
@@ -74,6 +75,7 @@ public class ExtensionAlert extends ExtensionAdaptor implements
 		SessionChangedListener, XmlReporterExtension, OptionsChangedListener {
 
     public static final String NAME = "ExtensionAlert";
+    private static final Logger logger = Logger.getLogger(ExtensionAlert.class);
     private Map<Integer, HistoryReference> hrefs = new HashMap<>();
     private AlertTreeModel treeModel = null;
     private AlertTreeModel filteredTreeModel = null;
@@ -84,7 +86,6 @@ public class ExtensionAlert extends ExtensionAdaptor implements
     private PopupMenuAlertDelete popupMenuAlertDelete = null;
     private PopupMenuAlertsRefresh popupMenuAlertsRefresh = null;
     private PopupMenuShowAlerts popupMenuShowAlerts = null;
-    private Logger logger = Logger.getLogger(ExtensionAlert.class);
 	private AlertParam alertParam = null;
 	private OptionsAlertPanel optionsPanel = null;
 	private Properties alertOverrides = new Properties();
@@ -118,7 +119,7 @@ public class ExtensionAlert extends ExtensionAdaptor implements
         }
         extensionHook.addSessionListener(this);
         extensionHook.addOptionsChangedListener(this);
-
+        extensionHook.addApiImplementor(new AlertAPI(this));
     }
 
 	@Override
@@ -170,6 +171,10 @@ public class ExtensionAlert extends ExtensionAdaptor implements
 	}
 
     public void alertFound(Alert alert, HistoryReference ref) {
+        if (isInvalid(alert)) {
+            return;
+        }
+
         try {
             logger.debug("alertFound " + alert.getName() + " " + alert.getUri());
             if (ref == null) {
@@ -186,7 +191,7 @@ public class ExtensionAlert extends ExtensionAdaptor implements
 
             alert.setSourceHistoryId(ref.getHistoryId());
 
-            hrefs.put(Integer.valueOf(ref.getHistoryId()), ref);
+            hrefs.put(ref.getHistoryId(), ref);
             
             this.applyOverrides(alert);
 
@@ -222,6 +227,17 @@ public class ExtensionAlert extends ExtensionAdaptor implements
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
         }
+    }
+
+    private static boolean isInvalid(Alert alert) {
+        if (alert.getUri().isEmpty() || alert.getMessage() == null) {
+            logger.error(
+                    "Attempting to raise an alert without URI and/or HTTP message, Plugin ID: " + alert.getPluginId()
+                            + " Alert Name:" + alert.getName() + "\n\t"
+                            + StringUtils.join(Thread.currentThread().getStackTrace(), "\n\t"));
+            return true;
+        }
+        return false;
     }
 
     /*
@@ -284,6 +300,14 @@ public class ExtensionAlert extends ExtensionAdaptor implements
         Map<String, String> map = new HashMap<>();
         map.put(AlertEventPublisher.ALERT_ID, Integer.toString(alert.getAlertId()));
         map.put(AlertEventPublisher.HISTORY_REFERENCE_ID, Integer.toString(alert.getSourceHistoryId()));
+        map.put(AlertEventPublisher.NAME, alert.getName());
+        map.put(AlertEventPublisher.URI, alert.getUri().toString());
+        map.put(AlertEventPublisher.PARAM, alert.getParam());
+        map.put(AlertEventPublisher.RISK, Integer.toString(alert.getRisk()));
+        map.put(AlertEventPublisher.RISK_STRING, Alert.MSG_RISK[alert.getRisk()]);
+        map.put(AlertEventPublisher.CONFIDENCE, Integer.toString(alert.getConfidence()));
+        map.put(AlertEventPublisher.CONFIDENCE_STRING, Alert.MSG_CONFIDENCE[alert.getConfidence()]);
+        map.put(AlertEventPublisher.SOURCE, Integer.toString(alert.getSource().getId()));
         ZAP.getEventBus().publishSyncEvent(
                 AlertEventPublisher.getPublisher(),
                 new Event(AlertEventPublisher.getPublisher(), event, new Target(historyReference.getSiteNode()), map));
@@ -498,7 +522,7 @@ public class ExtensionAlert extends ExtensionAdaptor implements
         final ExtensionHistory extensionHistory = Control.getSingleton().getExtensionLoader().getExtension(ExtensionHistory.class);
 
         for (int i = 0; i < v.size(); i++) {
-            int alertId = v.get(i).intValue();
+            int alertId = v.get(i);
             RecordAlert recAlert = tableAlert.read(alertId);
             int historyId = recAlert.getHistoryId();
             HistoryReference historyReference = null;
@@ -507,7 +531,7 @@ public class ExtensionAlert extends ExtensionAdaptor implements
             }
 
             if (historyReference == null) {
-                historyReference = this.hrefs.get(Integer.valueOf(historyId));
+                historyReference = this.hrefs.get(historyId);
             }
 
             Alert alert;
@@ -520,13 +544,13 @@ public class ExtensionAlert extends ExtensionAdaptor implements
             if (historyReference != null) {
                 // The ref can be null if hrefs are purged
                 addAlertToTree(alert);
-                Integer key = Integer.valueOf(historyId);
+                Integer key = historyId;
                 if (!hrefs.containsKey(key)) {
                     this.hrefs.put(key, alert.getHistoryRef());
                 }
             }
         }
-        siteTree.nodeStructureChanged((SiteNode) siteTree.getRoot());
+        siteTree.nodeStructureChanged(siteTree.getRoot());
     }
 
     private PopupMenuAlert getPopupMenuAlertAdd() {
@@ -585,7 +609,7 @@ public class ExtensionAlert extends ExtensionAdaptor implements
         }
 
         SiteMap siteTree = this.getModel().getSession().getSiteTree();
-        ((SiteNode) siteTree.getRoot()).deleteAllAlerts();
+        siteTree.getRoot().deleteAllAlerts();
 
         for (HistoryReference href : hrefs.values()) {
             href.deleteAllAlerts();
@@ -639,7 +663,7 @@ public class ExtensionAlert extends ExtensionAdaptor implements
                 }
             }
             for (HistoryReference href : toDelete) {
-                hrefs.remove(Integer.valueOf(href.getHistoryId()));
+                hrefs.remove(href.getHistoryId());
             }
         }
 
@@ -676,7 +700,7 @@ public class ExtensionAlert extends ExtensionAdaptor implements
             this.recalcAlerts();
         }
 
-        hrefs.remove(Integer.valueOf(hRef.getHistoryId()));
+        hrefs.remove(hRef.getHistoryId());
     }
     
     /**
@@ -733,7 +757,7 @@ public class ExtensionAlert extends ExtensionAdaptor implements
             v = tableAlert.getAlertList();
 
             for (int i = 0; i < v.size(); i++) {
-                int alertId = v.get(i).intValue();
+                int alertId = v.get(i);
                 RecordAlert recAlert = tableAlert.read(alertId);
                 Alert alert = new Alert(recAlert);
                 if (alert.getHistoryRef() != null) {
@@ -988,4 +1012,15 @@ public class ExtensionAlert extends ExtensionAdaptor implements
     public boolean supportsLowMemory() {
     	return true;
     }
+
+    /**
+     * Check if an alert already exists in the alerts tree.
+     *
+     * @param alertToCheck
+     * @return true if new alert, false otherwise.
+     */
+    public boolean isNewAlert(Alert alertToCheck) {
+        return (getTreeModel().getAlertNode(alertToCheck) == null);
+    }
+
 }

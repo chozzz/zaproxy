@@ -27,7 +27,6 @@ import java.awt.EventQueue;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Point;
-import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
@@ -50,7 +49,6 @@ import javax.swing.JSplitPane;
 import javax.swing.JToggleButton;
 import javax.swing.JToolBar;
 import javax.swing.JTree;
-import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.event.TreeSelectionEvent;
 import javax.swing.event.TreeSelectionListener;
@@ -140,6 +138,12 @@ public class AlertPanel extends AbstractPanel {
 
 	private ExtensionAlert extension = null;
 
+    /**
+     * A button that allows to delete all alerts.
+     * 
+     * @see #getDeleteAllButton()
+     */
+    private JButton deleteAllButton;
 	
     public AlertPanel(ExtensionAlert extension) {
         super();
@@ -160,7 +164,7 @@ public class AlertPanel extends AbstractPanel {
 
         this.add(getPanelCommand(), getPanelCommand().getName());
 			
-		this.setDefaultAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_A, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask() | KeyEvent.SHIFT_DOWN_MASK, false));
+		this.setDefaultAccelerator(view.getMenuShortcutKeyStroke(KeyEvent.VK_A, KeyEvent.SHIFT_DOWN_MASK, false));
 		this.setMnemonic(Constant.messages.getChar("alerts.panel.mnemonic"));
 		this.setShowByDefault(true);
 	}
@@ -210,6 +214,8 @@ public class AlertPanel extends AbstractPanel {
 			panelToolbar.add(getLinkWithSitesTreeButton());
 			panelToolbar.addSeparator();
 			panelToolbar.add(getEditButton());
+			panelToolbar.addSeparator();
+			panelToolbar.add(getDeleteAllButton());
 		}
 		return panelToolbar;
 	}
@@ -455,8 +461,8 @@ public class AlertPanel extends AbstractPanel {
 							if (userObject instanceof Alert) {
 								HistoryReference historyReference = ((Alert) userObject).getHistoryRef();
 								if (historyReference != null && !historyReferenceIdsAdded
-										.contains(Integer.valueOf(historyReference.getHistoryId()))) {
-									historyReferenceIdsAdded.add(Integer.valueOf(historyReference.getHistoryId()));
+										.contains(historyReference.getHistoryId())) {
+									historyReferenceIdsAdded.add(historyReference.getHistoryId());
 									uniqueHistoryReferences.add(historyReference);
 								}
 							}
@@ -718,6 +724,24 @@ public class AlertPanel extends AbstractPanel {
 			});
 		}
 		return editButton;
+	}
+
+	private JButton getDeleteAllButton() {
+		if (deleteAllButton == null) {
+			deleteAllButton = new JButton();
+			deleteAllButton.setToolTipText(Constant.messages.getString("alert.deleteall.button.tooltip"));
+			deleteAllButton
+					.setIcon(DisplayUtils.getScaledIcon(AlertPanel.class.getResource("/resource/icon/fugue/broom-alerts.png")));
+
+			deleteAllButton.addActionListener(e -> {
+				if (View.getSingleton()
+						.showConfirmDialog(Constant.messages.getString("alert.deleteall.confirm")) != JOptionPane.OK_OPTION) {
+					return;
+				}
+				extension.deleteAllAlerts();
+			});
+		}
+		return deleteAllButton;
 	}
 
 }

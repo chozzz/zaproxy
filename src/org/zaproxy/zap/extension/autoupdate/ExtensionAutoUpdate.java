@@ -19,19 +19,18 @@
  */
 package org.zaproxy.zap.extension.autoupdate;
 import java.awt.EventQueue;
-import java.awt.Toolkit;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
 import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.StringReader;
 import java.lang.reflect.InvocationTargetException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -50,7 +49,6 @@ import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
-import javax.swing.KeyStroke;
 import javax.swing.SwingWorker;
 import javax.swing.filechooser.FileFilter;
 
@@ -58,6 +56,7 @@ import org.apache.commons.configuration.ConfigurationException;
 import org.apache.commons.configuration.XMLPropertiesConfiguration;
 import org.apache.commons.httpclient.URI;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.log4j.Logger;
 import org.parosproxy.paros.CommandLine;
 import org.parosproxy.paros.Constant;
@@ -197,7 +196,7 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 	private ZapMenuItem getMenuItemCheckUpdate() {
 		if (menuItemCheckUpdate == null) {
 			menuItemCheckUpdate = new ZapMenuItem("cfu.help.menu.check", 
-					KeyStroke.getKeyStroke(KeyEvent.VK_U, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask(), false));
+					getView().getMenuShortcutKeyStroke(KeyEvent.VK_U, 0, false));
 			menuItemCheckUpdate.setText(Constant.messages.getString("cfu.help.menu.check"));
 			menuItemCheckUpdate.addActionListener(new java.awt.event.ActionListener() { 
 				@Override
@@ -213,7 +212,7 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 	private ZapMenuItem getMenuItemLoadAddOn() {
 		if (menuItemLoadAddOn == null) {
 			menuItemLoadAddOn = new ZapMenuItem("cfu.file.menu.loadaddon", 
-					KeyStroke.getKeyStroke(KeyEvent.VK_L, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask(), false));
+					getView().getMenuShortcutKeyStroke(KeyEvent.VK_L, 0, false));
 			menuItemLoadAddOn.addActionListener(new java.awt.event.ActionListener() { 
 				@Override
 				public void actionPerformed(java.awt.event.ActionEvent e) {
@@ -251,18 +250,86 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 		}
 		return menuItemLoadAddOn;
 	}
-	
-	private void installLocalAddOn(Path file) throws Exception {
-		if (!AddOn.isAddOn(file)) {
-			showWarningMessageInvalidAddOnFile();
-			return;
-		}
 
+	boolean installLocalAddOnQuietly(Path file) {
 		AddOn ao;
 		try {
 			ao = new AddOn(file);
-		} catch (Exception e) {
-			showWarningMessageInvalidAddOnFile();
+		} catch (IOException e) {
+			logger.warn("Failed to create the add-on: " + e.getMessage(), e);
+			return false;
+		}
+
+		if (!ao.canLoadInCurrentVersion()) {
+			logger.warn("Can not install the add-on, incompatible ZAP version.");
+			return false;
+		}
+
+		AddOn installedAddOn = this.getLocalVersionInfo().getAddOn(ao.getId());
+		if (installedAddOn != null) {
+			try {
+				if (Files.isSameFile(installedAddOn.getFile().toPath(), ao.getFile().toPath())) {
+					logger.warn("Can not install the add-on, same file already installed.");
+					return false;
+				}
+			} catch (IOException e) {
+				logger.warn("An error occurred while checking the add-ons' files: " + e.getMessage(), e);
+				return false;
+			}
+		}
+
+		File addOnFile;
+		try {
+			addOnFile = copyAddOnFileToLocalPluginFolder(ao);
+		} catch (FileAlreadyExistsException e) {
+			logger.warn("Unable to copy add-on, a file with the same name already exists.", e);
+			return false;
+		} catch (IOException e) {
+			logger.warn("Unable to copy add-on to local plugin folder.", e);
+			return false;
+		}
+
+		ao.setFile(addOnFile);
+
+		return install(ao);
+	}
+	
+	private void installLocalAddOn(Path file) throws Exception {
+		AddOn ao;
+		try {
+			ao = new AddOn(file);
+		} catch (AddOn.InvalidAddOnException e) {
+			AddOn.ValidationResult result = e.getValidationResult();
+			switch (result.getValidity()) {
+			case INVALID_PATH:
+				showWarningMessageInvalidAddOnFile(Constant.messages.getString("cfu.warn.invalidAddOn.invalidPath"));
+				break;
+			case INVALID_FILE_NAME:
+				showWarningMessageInvalidAddOnFile(Constant.messages.getString("cfu.warn.invalidAddOn.noZapExtension"));
+				break;
+			case FILE_NOT_READABLE:
+				showWarningMessageInvalidAddOnFile(Constant.messages.getString("cfu.warn.invalidAddOn.notReadable"));
+				break;
+			case UNREADABLE_ZIP_FILE:
+				showWarningMessageInvalidAddOnFile(
+						Constant.messages.getString("cfu.warn.invalidAddOn.errorZip", e.getMessage()));
+				break;
+			case IO_ERROR_FILE:
+				showWarningMessageInvalidAddOnFile(
+						Constant.messages.getString("cfu.warn.invalidAddOn.ioError", e.getMessage()));
+				break;
+			case MISSING_MANIFEST:
+				showWarningMessageInvalidAddOnFile(Constant.messages.getString("cfu.warn.invalidAddOn.missingManifest"));
+				break;
+			case INVALID_MANIFEST:
+				showWarningMessageInvalidAddOnFile(
+						Constant.messages.getString("cfu.warn.invalidAddOn.invalidManifest", e.getMessage()));
+				break;
+			default:
+				showWarningMessageInvalidAddOnFile(e.getMessage());
+				logger.warn(e);
+				break;
+			}
 			return;
 		}
 
@@ -276,10 +343,25 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 				: latestVersionInfo);
 
 		boolean update = false;
+		boolean uninstallBeforeAddOnCopy = false;
 		AddOnChangesResult result;
 		AddOn installedAddOn = getLocalVersionInfo().getAddOn(ao.getId());
 		if (installedAddOn != null) {
-			if (!ao.isUpdateTo(installedAddOn)) {
+			if (ao.getVersion().equals(installedAddOn.getVersion())) {
+				int reinstall = View.getSingleton().showYesNoDialog(
+						View.getSingleton().getMainFrame(),
+						new Object[] {
+								Constant.messages.getString(
+										"cfu.warn.addOnSameVersion",
+										installedAddOn.getVersion(),
+										View.getSingleton().getStatusUI(installedAddOn.getStatus()).toString(),
+										ao.getVersion(),
+										View.getSingleton().getStatusUI(ao.getStatus()).toString()) });
+				if (reinstall != JOptionPane.YES_OPTION) {
+					return;
+				}
+				uninstallBeforeAddOnCopy = true;
+			} else if (!ao.isUpdateTo(installedAddOn)) {
 				View.getSingleton().showWarningDialog(
 						Constant.messages.getString(
 								"cfu.warn.addOnOlderVersion",
@@ -308,7 +390,7 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 				}
 			}
 			
-			installLocalAddOn(ao);
+			installLocalAddOn(ao, uninstallBeforeAddOnCopy);
 			return;
 		}
 
@@ -327,10 +409,14 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 		}
 		
 		processAddOnChanges(getView().getMainFrame(), result);
-		installLocalAddOn(ao);
+		installLocalAddOn(ao, uninstallBeforeAddOnCopy);
 	}
 
-	private void installLocalAddOn(AddOn ao) {
+	private void installLocalAddOn(AddOn ao, boolean uninstallBeforeAddOnCopy) {
+		if (uninstallBeforeAddOnCopy && !uninstallAddOn(null, getLocalVersionInfo().getAddOn(ao.getId()), true)) {
+			return;
+		}
+
 		File addOnFile;
 		try {
 			addOnFile = copyAddOnFileToLocalPluginFolder(ao);
@@ -349,8 +435,8 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 		install(ao);
 	}
 
-	private void showWarningMessageInvalidAddOnFile() {
-		View.getSingleton().showWarningDialog(Constant.messages.getString("cfu.warn.invalidAddOn"));
+	private void showWarningMessageInvalidAddOnFile(String reason) {
+		View.getSingleton().showWarningDialog(Constant.messages.getString("cfu.warn.invalidAddOn", reason));
 	}
 
 	private void showWarningMessageCantLoadAddOn(AddOn ao) {
@@ -420,7 +506,7 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 				this.downloadProgressThread = null;
 			}
 			if (this.downloadProgressThread == null) {
-				this.downloadProgressThread = new Thread() {
+				this.downloadProgressThread = new Thread("ZAP-DownloadInstaller") {
 					@Override
 					public void run() {
 						while (downloadManager.getCurrentDownloadCount() > 0) {
@@ -448,9 +534,14 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 	}
 	
 	public void installNewExtensions() {
+		installNewExtensionsImpl();
+	}
+
+	private boolean installNewExtensionsImpl() {
     	final OptionsParamCheckForUpdates options = getModel().getOptionsParam().getCheckForUpdatesParam();
 		List<Downloader> handledFiles = new ArrayList<>();
 		
+		MutableBoolean allInstalled = new MutableBoolean(true);
 		for (Downloader dl : downloadFiles) {
 			if (dl.getFinished() == null) {
 				continue;
@@ -459,6 +550,7 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 			try {
 				if (!dl.isValidated()) {
 					logger.debug("Ignoring unvalidated download: " + dl.getUrl());
+					allInstalled.setFalse();
 					if (addonsDialog != null) {
 						addonsDialog.notifyAddOnDownloadFailed(dl.getUrl().toString());
 					} else {
@@ -470,7 +562,7 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 							}
 						}
 					}
-				} else if (AddOn.isAddOn(dl.getTargetFile().toPath())) {
+				} else if (AddOn.isAddOnFileName(dl.getTargetFile().getName())) {
 					File f = dl.getTargetFile();
 					if (! options.getDownloadDirectory().equals(dl.getTargetFile().getParentFile())) {
 						// Move the file to the specified directory - we do this after its been downloaded
@@ -489,19 +581,21 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 							} else {
 								logger.error("Failed to move downloaded add-on from " + dl.getTargetFile().getAbsolutePath() +
 										" to " + f.getAbsolutePath() + " - skipping", e);
+								allInstalled.setFalse();
 								continue;
 							}
 						}
 					}
 					
-					AddOn ao = new AddOn(f.toPath());
-					if (ao.canLoadInCurrentVersion()) {
-						install(ao);
-					} else {
-			    		logger.info("Cant load add-on " + ao.getName() + 
-			    				" Not before=" + ao.getNotBeforeVersion() + " Not from=" + ao.getNotFromVersion() + 
-			    				" Version=" + Constant.PROGRAM_VERSION);
-					}
+					AddOn.createAddOn(f.toPath()).ifPresent(ao -> {
+						if (ao.canLoadInCurrentVersion()) {
+							allInstalled.setValue(allInstalled.booleanValue() & install(ao));
+						} else {
+							logger.info("Cant load add-on " + ao.getName() + 
+									" Not before=" + ao.getNotBeforeVersion() + " Not from=" + ao.getNotFromVersion() + 
+									" Version=" + Constant.PROGRAM_VERSION);
+						}
+					});
 				}
 			} catch (Exception e) {
 				logger.error(e.getMessage(), e);
@@ -512,6 +606,7 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 			// Cant remove in loop above as we're iterating through the list
 			this.downloadFiles.remove(dl);
 		}
+		return allInstalled.booleanValue();
 	}
 	
 	public int getDownloadProgressPercent(URL url) throws Exception {
@@ -634,6 +729,13 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
     	
     	final OptionsParamCheckForUpdates options = getModel().getOptionsParam().getCheckForUpdatesParam();
     	
+        if (View.isInitialised()) {
+            if (!options.isCheckOnStart()) {
+                alertIfOutOfDate(false);
+                return;
+            }
+        }
+
 		if (! options.checkOnStart()) {
 			// Top level option not set, dont do anything, unless already downloaded last release
 			if (View.isInitialised() && this.getPreviousVersionInfo() != null) {
@@ -801,11 +903,12 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 
     private ZapXmlConfiguration getRemoteConfigurationUrl(String url) throws 
     		IOException, ConfigurationException, InvalidCfuUrlException {
-        HttpMessage msg = new HttpMessage(new URI(url, true), 
-        		Model.getSingleton().getOptionsParam().getConnectionParam());
+        HttpMessage msg = new HttpMessage(new URI(url, true));
         getHttpSender().sendAndReceive(msg,true);
         if (msg.getResponseHeader().getStatusCode() != HttpStatusCode.OK) {
-            throw new IOException();
+            throw new IOException(
+                    "Expected '200 OK' but got '" + msg.getResponseHeader().getStatusCode() + " "
+                            + msg.getResponseHeader().getReasonPhrase() + "'");
         }
         if (! msg.getRequestHeader().isSecure()) {
         	// Only access the cfu page over https
@@ -818,23 +921,12 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 
         // Save version file so we can report new addons next time
 		File f = new File(Constant.FOLDER_LOCAL_PLUGIN, VERSION_FILE_NAME);
-    	FileWriter out = null;
-	    try {
-	    	out = new FileWriter(f);
-	    	out.write(msg.getResponseBody().toString());
-		} catch (Exception e) {
-			logger.error(e.getMessage(), e);
-	    } finally {
-	    	try {
-				if (out != null) {
-					out.close();
-				}
-			} catch (IOException e) {
-				// Ignore
-			}
-		}
+        try{
+            Files.write(f.toPath(), msg.getResponseBody().getBytes());
+        }catch(IOException ioe){
+            logger.error(ioe.getMessage(), ioe);
+        }
 
-    	
     	return config;
     }
 
@@ -917,6 +1009,10 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
         return getLocalVersionInfo().getInstalledAddOns();
     }
 
+    protected List<AddOn> getLocalAddOns() {
+        return getLocalVersionInfo().getAddOns();
+    }
+
 	protected List<AddOn> getMarketplaceAddOns() {
         AddOnCollection aoc = this.getLatestVersionInfo();
         if (aoc != null) {
@@ -933,13 +1029,12 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
     	if (latestVersionInfo == null) {
     		
     		if (this.remoteCallThread == null || !this.remoteCallThread.isAlive()) {
-    			this.remoteCallThread = new Thread() {
+    			this.remoteCallThread = new Thread("ZAP-cfu") {
     			
 	    			@Override
 	    			public void run() {
 	    				// Using a thread as the first call could timeout
 	    				// and we dont want the ui to hang in the meantime
-	    				this.setName("ZAP-cfu");
 						String shortUrl;
 						String longUrl;
 						if (Constant.isDevBuild()) {
@@ -1029,7 +1124,7 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 		}
 	}
 	
-	private void install(AddOn ao) {
+	private boolean install(AddOn ao) {
 		if (! ao.canLoadInCurrentVersion()) {
     		throw new IllegalArgumentException("Cant load add-on " + ao.getName() + 
     				" Not before=" + ao.getNotBeforeVersion() + " Not from=" + ao.getNotFromVersion() + 
@@ -1040,7 +1135,7 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 		if (installedAddOn != null) {
 			if ( ! uninstallAddOn(null, installedAddOn, true)) {
                 // Cant uninstall the old version, so dont try to install the new one
-	            return;
+	            return false;
 			}
 		}
 		logger.info("Installing new addon " + ao.getId() + " v" + ao.getVersion());
@@ -1052,6 +1147,13 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 
 		ExtensionFactory.getAddOnLoader().addAddon(ao);
 
+		logger.info("Finished installing new addon " + ao.getId() + " v" + ao.getVersion());
+		if (View.isInitialised()) {
+			// Report info to the Output tab
+			View.getSingleton().getOutputPanel().append(
+					Constant.messages.getString("cfu.output.installing.finished", ao.getName(), ao.getVersion()) + "\n");
+		}
+		
         if (latestVersionInfo != null) {
             AddOn addOn = latestVersionInfo.getAddOn(ao.getId());
             if (addOn != null && AddOn.InstallationStatus.DOWNLOADING == addOn.getInstallationStatus()) {
@@ -1062,6 +1164,7 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
         if (addonsDialog != null) {
             addonsDialog.notifyAddOnInstalled(ao);
         }
+        return true;
 	}
 	
     private boolean uninstall(AddOn addOn, boolean upgrading, AddOnUninstallationProgressCallback callback) {
@@ -1630,7 +1733,9 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 
                 processAddOnChanges(null, result);
             }
-            waitAndInstallDownloads();
+            if (!waitAndInstallDownloads()) {
+                errorMessages.append(Constant.messages.getString("cfu.cmdline.addoninst.error")).append("\n");
+            }
         }
         return errorMessages.toString();
     }
@@ -1788,7 +1893,7 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
         }
 	}
 	
-	private void waitAndInstallDownloads() {
+	private boolean waitAndInstallDownloads() {
 		while (downloadManager.getCurrentDownloadCount() > 0) {
 			try {
 				Thread.sleep(200);
@@ -1806,8 +1911,9 @@ public class ExtensionAutoUpdate extends ExtensionAdaptor implements CheckForUpd
 			}
 		}
 		if (getView() == null) {
-			installNewExtensions();
+			return installNewExtensionsImpl();
 		}
+		return true;
 	}
 
 	@Override

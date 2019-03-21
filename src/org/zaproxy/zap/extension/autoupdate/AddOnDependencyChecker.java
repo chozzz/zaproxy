@@ -246,7 +246,9 @@ class AddOnDependencyChecker {
 
         SelectableAddOnTableModel optionalAddOnsTableModel = null;
         if (!changesResult.getOptionalAddOns().isEmpty()) {
-            optionalAddOnsTableModel = new SelectableAddOnTableModel(changesResult.getOptionalAddOns());
+            optionalAddOnsTableModel = new SelectableAddOnTableModel(
+                    Constant.messages.getString("cfu.generic.table.header.selectInstall"),
+                    changesResult.getOptionalAddOns());
             issues += optionalAddOnsTableModel.getMinimumJavaVersionIssues();
             tabs.add(
                     Constant.messages.getString("cfu.confirmation.dialogue.tab.header.optionalAddOns"),
@@ -410,13 +412,19 @@ class AddOnDependencyChecker {
             }
         }
 
+        Set<AddOn> changedAddOns = new HashSet<>();
+        changedAddOns.addAll(selectedAddOns);
+        changedAddOns.addAll(installs);
+        changedAddOns.addAll(newVersions);
+
         Set<AddOn> expectedInstalledAddOns = new HashSet<>(remainingInstalledAddOns);
-        expectedInstalledAddOns.addAll(selectedAddOns);
-        expectedInstalledAddOns.addAll(installs);
-        expectedInstalledAddOns.addAll(newVersions);
+        expectedInstalledAddOns.addAll(changedAddOns);
+
+        changedAddOns.addAll(oldVersions);
 
         for (AddOn addOn : remainingInstalledAddOns) {
-            if (addOn.calculateRunRequirements(expectedInstalledAddOns).hasDependencyIssue()) {
+            if (addOn.dependsOn(changedAddOns)
+                    && addOn.calculateRunRequirements(expectedInstalledAddOns).hasDependencyIssue()) {
                 uninstalls.add(addOn);
             }
         }
@@ -925,11 +933,13 @@ class AddOnDependencyChecker {
 
         private static final long serialVersionUID = 2337381848530495407L;
 
+        private final String selectionRowName;
         private final Boolean[] selections;
 
-        public SelectableAddOnTableModel(Collection<AddOn> addOns) {
+        public SelectableAddOnTableModel(String selectionRowName, Collection<AddOn> addOns) {
             super(addOns, true);
 
+            this.selectionRowName = selectionRowName;
             selections = new Boolean[addOns.size()];
             for (int i = 0; i < selections.length; i++) {
                 selections[i] = Boolean.FALSE;
@@ -939,7 +949,7 @@ class AddOnDependencyChecker {
         @Override
         public String getColumnName(int column) {
             if (column == 0) {
-                return "";
+                return selectionRowName;
             }
             return super.getColumnName(column - 1);
         }
@@ -981,7 +991,7 @@ class AddOnDependencyChecker {
         public List<AddOn> getSelectedAddOns() {
             List<AddOn> selectedAddOns = new ArrayList<>(selections.length);
             for (int i = 0; i < selections.length; i++) {
-                if (selections[i].booleanValue()) {
+                if (selections[i]) {
                     selectedAddOns.add(getAddOn(i));
                 }
             }

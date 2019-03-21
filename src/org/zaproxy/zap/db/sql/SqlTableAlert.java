@@ -75,29 +75,29 @@ public class SqlTableAlert extends SqlAbstractTable implements TableAlert {
         try {
 			// Add the SOURCEHISTORYID column to the db if necessary
 			if (!DbUtils.hasColumn(connection, TABLE_NAME, SOURCEHISTORYID)) {
-			    DbUtils.executeAndClose(connection.prepareStatement(DbSQL.getSQL("alert.ps.addsourcehistoryid")));
+			    DbUtils.execute(connection, DbSQL.getSQL("alert.ps.addsourcehistoryid"));
 			}
 			
 			// Add the ATTACK column to the db if necessary
 			if (!DbUtils.hasColumn(connection, TABLE_NAME, ATTACK)) {
-			    DbUtils.executeAndClose(connection.prepareStatement(DbSQL.getSQL("alert.ps.addattack")));
+			    DbUtils.execute(connection, DbSQL.getSQL("alert.ps.addattack"));
 			}
 			
 			if (!DbUtils.hasColumn(connection, TABLE_NAME, EVIDENCE)) {
 				// Evidence, cweId and wascId all added at the same time
-			    DbUtils.executeAndClose(connection.prepareStatement(DbSQL.getSQL("alert.ps.addevidence")));
-			    DbUtils.executeAndClose(connection.prepareStatement(DbSQL.getSQL("alert.ps.addcweid")));
-			    DbUtils.executeAndClose(connection.prepareStatement(DbSQL.getSQL("alert.ps.addwascid")));
+			    DbUtils.execute(connection, DbSQL.getSQL("alert.ps.addevidence"));
+			    DbUtils.execute(connection, DbSQL.getSQL("alert.ps.addcweid"));
+			    DbUtils.execute(connection, DbSQL.getSQL("alert.ps.addwascid"));
 			}
 			
 			if (!DbUtils.hasIndex(connection, TABLE_NAME, ALERT_INDEX)) {
 				// this speads up session loading
-				DbUtils.executeAndClose(connection.prepareStatement(DbSQL.getSQL("alert.ps.addalertindex")));
+				DbUtils.execute(connection, DbSQL.getSQL("alert.ps.addalertindex"));
 			}
 
 			if (!DbUtils.hasColumn(connection, TABLE_NAME, SOURCEID)) {
-				DbUtils.executeAndClose(connection.prepareStatement(DbSQL.getSQL("alert.ps.addsourceid")));
-				DbUtils.executeAndClose(connection.prepareStatement(DbSQL.getSQL("alert.ps.addsourceidindex")));
+				DbUtils.execute(connection, DbSQL.getSQL("alert.ps.addsourceid"));
+				DbUtils.execute(connection, DbSQL.getSQL("alert.ps.addsourceidindex"));
 			}
 		} catch (SQLException e) {
 			throw new DatabaseException(e);
@@ -115,8 +115,7 @@ public class SqlTableAlert extends SqlAbstractTable implements TableAlert {
 		    psRead = DbSQL.getSingleton().getPreparedStatement("alert.ps.read");
 			psRead.getPs().setInt(1, alertId);
 			try (ResultSet rs = psRead.getPs().executeQuery()) {
-				RecordAlert ra = build(rs);
-				return ra;
+				return build(rs);
 			}
 		} catch (Exception e) {
 			throw new DatabaseException(e);
@@ -329,7 +328,7 @@ public class SqlTableAlert extends SqlAbstractTable implements TableAlert {
 		    try (ResultSet rs = psGetAlertsForSession.getPs().executeQuery()) {
 		        while (rs.next()) {
 		            int alertId = rs.getInt(ALERTID);
-		            v.add(Integer.valueOf(alertId));
+		            v.add(alertId);
 		        }
 		    }
 		    return v;
@@ -348,7 +347,7 @@ public class SqlTableAlert extends SqlAbstractTable implements TableAlert {
 		    Vector<Integer> v = new Vector<>();
 		    try (ResultSet rs = psGetAllAlertIds.getPs().executeQuery()) {
 		        while (rs.next()) {
-		            v.add(Integer.valueOf(rs.getInt(ALERTID)));
+		            v.add(rs.getInt(ALERTID));
 		        }
 		    }
 		    return v;

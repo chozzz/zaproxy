@@ -23,19 +23,26 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Year;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.ResourceBundle;
 
 public class DotNetAPIGenerator extends AbstractAPIGenerator {
 	
-	private final String HEADER = 
+	/**
+	 * Default output directory is the "gen" package of subproject zap-clientapi (of zap-api-java project).
+	 */
+	private static final String DEFAULT_OUTPUT_DIR = "../zap-api-dotnet/src/OWASPZAPDotNetAPI/OWASPZAPDotNetAPI/Generated";
+
+	private static final String HEADER = 
 			"/* Zed Attack Proxy (ZAP) and its related class files.\n" +
 			" *\n" +
 			" * ZAP is an HTTP/HTTPS proxy for assessing web application security.\n" +
 			" *\n" +
-			" * Copyright the ZAP development team\n" +
+			" * Copyright " + Year.now() + " the ZAP development team\n" +
 			" *\n" +
 			" * Licensed under the Apache License, Version 2.0 (the \"License\");\n" +
 			" * you may not use this file except in compliance with the License.\n" +
@@ -61,15 +68,20 @@ public class DotNetAPIGenerator extends AbstractAPIGenerator {
         initMap.put("continue", "cont");
         initMap.put("string", "str");
         initMap.put("params", "parameters");
+        initMap.put("bool", "boolean");
         nameMap = Collections.unmodifiableMap(initMap);
     }
     
     public DotNetAPIGenerator() {
-    	super("../zap-api-dotnet/src/OWASPZAPDotNetAPI/OWASPZAPDotNetAPI/Generated");
+    	super(DEFAULT_OUTPUT_DIR);
     }
 
     public DotNetAPIGenerator(String path, boolean optional) {
     	super(path, optional);
+    }
+
+    public DotNetAPIGenerator(String path, boolean optional, ResourceBundle resourceBundle) {
+        super(path, optional, resourceBundle);
     }
 
     /**
@@ -101,8 +113,18 @@ public class DotNetAPIGenerator extends AbstractAPIGenerator {
 			if (isOptional()) {
 				out.write("\t\t///" + OPTIONAL_MESSAGE + "\n");
 			}
+			if (element.isDeprecated()) {
+				out.write("\t\t/// [Obsolete]");
+				String deprecationDesc = element.getDeprecatedDescription();
+				if (deprecationDesc != null && !deprecationDesc.isEmpty()) {
+					out.write(" " + deprecationDesc);
+				}
+				out.write("\n");
+			}
 			out.write("\t\t/// </summary>\n");
 			out.write("\t\t/// <returns></returns>\n");
+			
+			
 		} catch (Exception e) {
 			// Might not be set, so just print out the ones that are missing
 			System.out.println("No i18n for: " + descTag);
@@ -113,17 +135,24 @@ public class DotNetAPIGenerator extends AbstractAPIGenerator {
 				out.write("\t\t/// <returns></returns>\n");
 			}
 		}
+		
+		if (element.isDeprecated()) {
+			String deprecationDesc = element.getDeprecatedDescription();
+			if (deprecationDesc != null && !deprecationDesc.isEmpty()) {
+				out.write("\t\t[Obsolete(\"");
+				out.write(deprecationDesc);
+				out.write("\")]\n");
+			}
+			else
+			{
+				out.write("\t\t[Obsolete]\n");
+			}
+		}
 
 		if (type.equals(OTHER_ENDPOINT)) {
 			out.write("\t\tpublic byte[] " + createMethodName(element.getName()) + "(");
 		} else {
 			out.write("\t\tpublic IApiResponse " + createMethodName(element.getName()) + "(");
-		}
-		if (type.equals(ACTION_ENDPOINT) || type.equals(OTHER_ENDPOINT)) {
-			// Always add the API key - we've no way of knowing if it will be required or not
-			hasParams = true;
-			out.write("string ");
-			out.write(API.API_KEY_PARAM);
 		}
 
 		if (element.getMandatoryParamNames() != null) {
@@ -133,9 +162,9 @@ public class DotNetAPIGenerator extends AbstractAPIGenerator {
 				} else {
 					out.write(", ");
 				}
-				if (param.toLowerCase().equals("boolean")) {
+				if (param.equalsIgnoreCase("boolean")) {
 					out.write("bool boolean");
-				} else if (param.toLowerCase().equals("integer")) {
+				} else if (param.equalsIgnoreCase("integer")) {
 					out.write("int i");
 				} else {
 					out.write("string ");
@@ -150,9 +179,9 @@ public class DotNetAPIGenerator extends AbstractAPIGenerator {
 				} else {
 					out.write(", ");
 				}
-				if (param.toLowerCase().equals("boolean")) {
+				if (param.equalsIgnoreCase("boolean")) {
 					out.write("bool boolean");
-				} else if (param.toLowerCase().equals("integer")) {
+				} else if (param.equalsIgnoreCase("integer")) {
 					out.write("int i");
 				} else {
 					out.write("string ");
@@ -168,18 +197,12 @@ public class DotNetAPIGenerator extends AbstractAPIGenerator {
 		if (hasParams) {
 			out.write("\t\t\tparameters = new Dictionary<string, string>();\n"); 
 			
-			if (type.equals(ACTION_ENDPOINT) || type.equals(OTHER_ENDPOINT)) {
-				// Always add the API key (if not null) - we've no way of knowing if it will be required or not
-				out.write("\t\t\tif (!string.IsNullOrWhiteSpace(apikey)){\n");
-				out.write("\t\t\t\tparameters.Add(\"apikey\", apikey);\n");
-				out.write("\t\t\t}\n");
-			}
 			if (element.getMandatoryParamNames() != null) {
 				for (String param : element.getMandatoryParamNames()) {
 					out.write("\t\t\tparameters.Add(\"" + param + "\", ");
-					if (param.toLowerCase().equals("boolean")) {
+					if (param.equalsIgnoreCase("boolean")) {
 						out.write("Convert.ToString(boolean)");
-					} else if (param.toLowerCase().equals("integer")) {
+					} else if (param.equalsIgnoreCase("integer")) {
 						out.write("Convert.ToString(i)");
 					} else {
 						out.write(createParameterName(param.toLowerCase()));
@@ -190,9 +213,9 @@ public class DotNetAPIGenerator extends AbstractAPIGenerator {
 			if (element.getOptionalParamNames() != null) {
 				for (String param : element.getOptionalParamNames()) {
 					out.write("\t\t\tparameters.Add(\"" + param + "\", ");
-					if (param.toLowerCase().equals("boolean")) {
+					if (param.equalsIgnoreCase("boolean")) {
 						out.write("Convert.ToString(boolean)");
-					} else if (param.toLowerCase().equals("integer")) {
+					} else if (param.equalsIgnoreCase("integer")) {
 						out.write("Convert.ToString(i)");
 					} else {
 						out.write(createParameterName(param.toLowerCase()));
@@ -276,9 +299,8 @@ public class DotNetAPIGenerator extends AbstractAPIGenerator {
 
 	public static void main(String[] args) throws Exception {
 		// Command for generating a DotNet version of the ZAP API		
-		DotNetAPIGenerator dnapi = new DotNetAPIGenerator("../zap-api-dotnet/src/OWASPZAPDotNetAPI/OWASPZAPDotNetAPI/Generated", false);
-		dnapi.generateCoreAPIFiles();
-		
+		DotNetAPIGenerator dnapi = new DotNetAPIGenerator(DEFAULT_OUTPUT_DIR, false);
+		dnapi.generateCoreAPIFiles();		
 	}
 
 }

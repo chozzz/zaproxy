@@ -19,10 +19,11 @@
  */
 package org.zaproxy.zap.extension.api;
 
-import static org.hamcrest.Matchers.startsWith;
+import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.startsWith;
 import static org.junit.Assert.assertThat;
 
 import java.net.Inet4Address;
@@ -43,9 +44,12 @@ import org.parosproxy.paros.network.HttpMessage;
 import org.parosproxy.paros.network.HttpOutputStream;
 import org.parosproxy.paros.network.HttpRequestHeader;
 import org.parosproxy.paros.view.View;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
 import org.zaproxy.zap.network.DomainMatcher;
 import org.zaproxy.zap.utils.ZapXmlConfiguration;
 
+import net.sf.json.JSON;
 import net.sf.json.JSONObject;
 
 /**
@@ -70,24 +74,23 @@ public class APIUnitTest {
     }
 
     @Test
-    public void shouldDenyAllAddressesIfNoneSet() throws Exception {
+    public void shouldAcceptCallbackIfNoAddressesSet() throws Exception {
         // Given
         API api = new API();
         api.setOptionsParamApi(createOptionsParamApi());
         TestApiImplementor apiImplementor = new TestApiImplementor();
         String requestUri = api.getCallBackUrl(apiImplementor, "http://example.com");
-        // When
-        boolean requestHandled = api.handleApiRequest(
+        HttpMessage requestHandled = api.handleApiRequest(
                 createApiRequest(new byte[] { 127, 0, 0, 1 }, "example.com", requestUri),
                 createMockedHttpInputStream(),
                 createMockedHttpOutputStream());
         // Then
-        assertThat(requestHandled, is(equalTo(true)));
-        assertThat(apiImplementor.wasUsed(), is(equalTo(false)));
+        assertThat(requestHandled, is(notNullValue()));
+        assertThat(apiImplementor.wasUsed(), is(equalTo(true)));
     }
 
     @Test
-    public void shouldDenyAddressNotSet() throws Exception {
+    public void shouldAcceptCallbackEvenIfAddressNotSet() throws Exception {
         // Given
         API api = new API();
         OptionsParamApi apiOptions = createOptionsParamApi();
@@ -95,18 +98,17 @@ public class APIUnitTest {
         api.setOptionsParamApi(apiOptions);
         TestApiImplementor apiImplementor = new TestApiImplementor();
         String requestUri = api.getCallBackUrl(apiImplementor, "http://example.com");
-        // When
-        boolean requestHandled = api.handleApiRequest(
+        HttpMessage requestHandled = api.handleApiRequest(
                 createApiRequest(new byte[] { 10, 0, 0, 2 }, "example.com", requestUri),
                 createMockedHttpInputStream(),
                 createMockedHttpOutputStream());
         // Then
-        assertThat(requestHandled, is(equalTo(true)));
-        assertThat(apiImplementor.wasUsed(), is(equalTo(false)));
+        assertThat(requestHandled, is(notNullValue()));
+        assertThat(apiImplementor.wasUsed(), is(equalTo(true)));
     }
 
     @Test
-    public void shouldDenyHostnameNotSet() throws Exception {
+    public void shouldAcceptCallbackEvenIfHostnameNotSet() throws Exception {
         // Given
         API api = new API();
         OptionsParamApi apiOptions = createOptionsParamApi();
@@ -114,14 +116,13 @@ public class APIUnitTest {
         api.setOptionsParamApi(apiOptions);
         TestApiImplementor apiImplementor = new TestApiImplementor();
         String requestUri = api.getCallBackUrl(apiImplementor, "http://example.com");
-        // When
-        boolean requestHandled = api.handleApiRequest(
+        HttpMessage requestHandled = api.handleApiRequest(
                 createApiRequest(new byte[] { 127, 0, 0, 1 }, "example.com", requestUri),
                 createMockedHttpInputStream(),
                 createMockedHttpOutputStream());
         // Then
-        assertThat(requestHandled, is(equalTo(true)));
-        assertThat(apiImplementor.wasUsed(), is(equalTo(false)));
+        assertThat(requestHandled, is(notNullValue()));
+        assertThat(apiImplementor.wasUsed(), is(equalTo(true)));
     }
 
     @Test
@@ -133,13 +134,12 @@ public class APIUnitTest {
         api.setOptionsParamApi(apiOptions);
         TestApiImplementor apiImplementor = new TestApiImplementor();
         String requestUri = api.getCallBackUrl(apiImplementor, "http://example.com");
-        // When
-        boolean requestHandled = api.handleApiRequest(
+        HttpMessage requestHandled = api.handleApiRequest(
                 createApiRequest(new byte[] { 10, 0, 0, 8 }, "example.com", requestUri),
                 createMockedHttpInputStream(),
                 createMockedHttpOutputStream());
         // Then
-        assertThat(requestHandled, is(equalTo(true)));
+        assertThat(requestHandled, is(notNullValue()));
         assertThat(apiImplementor.wasUsed(), is(equalTo(true)));
     }
 
@@ -337,6 +337,96 @@ public class APIUnitTest {
         assertThat(baseUrl, is(equalTo("https://127.0.0.1:8080/JSON/test/view/test/")));
     }
 
+    @Test(expected = ApiException.class)
+    public void shouldFailToGetXmlFromResponseWithNullEndpointName() throws ApiException {
+        // Given
+        String endpointName = null;
+        ApiResponse response = ApiResponseTest.INSTANCE;
+        // When
+        API.responseToXml(endpointName, response);
+        // Then = ApiException
+    }
+
+    @Test(expected = ApiException.class)
+    public void shouldFailToGetXmlFromResponseWithEmptyEndpointName() throws ApiException {
+        // Given
+        String endpointName = "";
+        ApiResponse response = ApiResponseTest.INSTANCE;
+        // When
+        API.responseToXml(endpointName, response);
+        // Then = ApiException
+    }
+
+    @Test(expected = ApiException.class)
+    public void shouldFailToGetXmlFromResponseWithInvalidXmlEndpointName() throws ApiException {
+        // Given
+        String endpointName = "<";
+        ApiResponse response = ApiResponseTest.INSTANCE;
+        // When
+        API.responseToXml(endpointName, response);
+        // Then = ApiException
+    }
+
+    @Test(expected = ApiException.class)
+    public void shouldFailToGetXmlFromNullResponse() throws ApiException {
+        // Given
+        String endpointName = "Name";
+        ApiResponse response = null;
+        // When
+        API.responseToXml(endpointName, response);
+        // Then = ApiException
+    }
+
+    @Test
+    public void shouldGetXmlFromResponse() throws ApiException {
+        // Given
+        String endpointName = "Name";
+        ApiResponse response = ApiResponseTest.INSTANCE;
+        // When
+        String xmlResponse = API.responseToXml(endpointName, response);
+        // Then
+        assertThat(xmlResponse, is(equalTo("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?><Name>XML</Name>")));
+    }
+
+    @Test
+    public void shouldGetHtmlFromResponse() {
+        // Given
+        ApiResponse response = ApiResponseTest.INSTANCE;
+        // When
+        String htmlResponse = API.responseToHtml(response);
+        // Then
+        assertThat(htmlResponse, is(equalTo("<head>\n</head>\n<body>\nHTML</body>\n")));
+    }
+
+    private static class ApiResponseTest extends ApiResponse {
+
+        private static final ApiResponseTest INSTANCE = new ApiResponseTest("");
+
+        public ApiResponseTest(String name) {
+            super(name);
+        }
+
+        @Override
+        public JSON toJSON() {
+            return null;
+        }
+
+        @Override
+        public void toXML(Document doc, Element rootElement) {
+            rootElement.appendChild(doc.createTextNode("XML"));
+        }
+
+        @Override
+        public void toHTML(StringBuilder sb) {
+            sb.append("HTML");
+        }
+
+        @Override
+        public String toString(int indent) {
+            return null;
+        }
+    }
+
     private static void assertApiNonceMatch(API api, String baseUrl) {
         try {
             // Given
@@ -345,20 +435,20 @@ public class APIUnitTest {
             TestApiImplementor apiImplementor = new TestApiImplementor();
             api.registerApiImplementor(apiImplementor);
             // When
-            boolean requestHandled = api.handleApiRequest(
+            HttpMessage requestHandled = api.handleApiRequest(
                     createApiRequest(new byte[] { 127, 0, 0, 1 }, hostHeader, baseUrl),
                     createMockedHttpInputStream(),
                     createMockedHttpOutputStream(),
                     true);
             // Then
-            assertThat(requestHandled, is(equalTo(true)));
+            assertThat(requestHandled, is(notNullValue()));
             assertThat(apiImplementor.wasUsed(), is(equalTo(true)));
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
-    private List<DomainMatcher> createPermittedAddresses(String... addresses) {
+    private static List<DomainMatcher> createPermittedAddresses(String... addresses) {
         if (addresses == null || addresses.length == 0) {
             return new ArrayList<>();
         }

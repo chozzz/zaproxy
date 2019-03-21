@@ -1,11 +1,13 @@
 package org.zaproxy.zap.extension.pscan;
 
-import net.htmlparser.jericho.MasonTagTypes;
-import net.htmlparser.jericho.MicrosoftTagTypes;
-import net.htmlparser.jericho.PHPTagTypes;
-import net.htmlparser.jericho.Source;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 import org.apache.log4j.Logger;
+import org.parosproxy.paros.control.Control;
 import org.parosproxy.paros.control.Control.Mode;
 import org.parosproxy.paros.core.proxy.ProxyListener;
 import org.parosproxy.paros.core.scanner.Alert;
@@ -17,9 +19,17 @@ import org.parosproxy.paros.extension.history.ProxyListenerLog;
 import org.parosproxy.paros.model.HistoryReference;
 import org.parosproxy.paros.model.Model;
 import org.parosproxy.paros.model.Session;
+import org.parosproxy.paros.network.HttpHeader;
 import org.parosproxy.paros.network.HttpMalformedHeaderException;
 import org.parosproxy.paros.network.HttpMessage;
+import org.parosproxy.paros.view.View;
 import org.zaproxy.zap.extension.alert.ExtensionAlert;
+import org.zaproxy.zap.utils.Stats;
+
+import net.htmlparser.jericho.MasonTagTypes;
+import net.htmlparser.jericho.MicrosoftTagTypes;
+import net.htmlparser.jericho.PHPTagTypes;
+import net.htmlparser.jericho.Source;
 
 public class PassiveScanThread extends Thread implements ProxyListener, SessionChangedListener {
 
@@ -27,6 +37,8 @@ public class PassiveScanThread extends Thread implements ProxyListener, SessionC
 
     //Could be after the last one that saves the HttpMessage, as this ProxyListener doesn't change the HttpMessage.
 	public static final int PROXY_LISTENER_ORDER = ProxyListenerLog.PROXY_LISTENER_ORDER + 1;
+	
+	private static Set<Integer> optedInHistoryTypes = new HashSet<Integer>();
 	
 	@SuppressWarnings("unused")
 	private OptionsPassiveScan options = null;
@@ -44,6 +56,11 @@ public class PassiveScanThread extends Thread implements ProxyListener, SessionC
 	private TableHistory historyTable = null;
 	private HistoryReference href = null;
 	private Session session;
+	
+	private String currentRuleName = "";
+	private String currentUrl = "";
+	private long currentRuleStartTime = 0;
+	private Map<Integer, Integer> alertCounts = new HashMap<Integer, Integer>();
 
 	/**
 	 * Constructs a {@code PassiveScanThread} with the given data.
@@ -133,19 +150,36 @@ public class PassiveScanThread extends Thread implements ProxyListener, SessionC
 					try {
 						// Parse the record
 						HttpMessage msg = href.getHttpMessage();
-						String response = msg.getResponseHeader().toString() + msg.getResponseBody().toString();
-						Source src = new Source(response);
+						Source src = new Source(msg.getResponseBody().toString());
+						currentUrl = msg.getRequestHeader().getURI().toString();
 						
 						for (PassiveScanner scanner : scannerList.list()) {
 							try {
 								if (shutDown) {
 									return;
 								}
-								if (scanner.isEnabled() && scanner.appliesToHistoryType(href.getHistoryType())) {
+								int hrefHistoryType = href.getHistoryType();
+								if (scanner.isEnabled() && (scanner.appliesToHistoryType(hrefHistoryType)
+										|| optedInHistoryTypes.contains(hrefHistoryType))) {
 									scanner.setParent(this);
+									currentRuleName = scanner.getName();
+									currentRuleStartTime = System.currentTimeMillis();
 									scanner.scanHttpRequestSend(msg, href.getHistoryId());
 									if (msg.isResponseFromTargetHost()) {
 										scanner.scanHttpResponseReceive(msg, href.getHistoryId(), src);
+									}
+									long timeTaken = System.currentTimeMillis() - currentRuleStartTime;
+									Stats.incCounter("stats.pscan." + currentRuleName, timeTaken);
+									if (timeTaken > 5000) {
+										// Took over 5 seconds, thats not ideal
+										String responseInfo = "";
+										if (msg.isResponseFromTargetHost()) {
+											responseInfo = msg.getResponseHeader().getHeader(HttpHeader.CONTENT_TYPE) + " " +
+													msg.getResponseBody().length();
+										}
+										logger.warn("Passive Scan rule " + currentRuleName + " took " + (timeTaken / 1000) + 
+												" seconds to scan " + currentUrl + " " +
+												responseInfo);
 									}
 								}
 							} catch (Throwable e) {
@@ -156,6 +190,9 @@ public class PassiveScanThread extends Thread implements ProxyListener, SessionC
 										" failed on record " + currentId + " from History table: "
 										+ href.getMethod() + " " + href.getURI(), e);
 							}
+							// Unset in case this is the last one that gets run for a while
+							currentRuleName = "";
+							currentRuleStartTime = 0;
 						}
 					} catch (Exception e) {
 						if (HistoryReference.getTemporaryTypes().contains(href.getHistoryType())) {
@@ -166,13 +203,17 @@ public class PassiveScanThread extends Thread implements ProxyListener, SessionC
 							logger.error("Parser failed on record " + currentId + " from History table", e);
 						}
 					}
-					
+					currentUrl = "";
 				}
 			} catch (Exception e) {
 				if (shutDown) {
 					return;
 				}
 				logger.error("Failed on record " + currentId + " from History table", e);
+			}
+			if (View.isInitialised()) {
+				Control.getSingleton().getExtensionLoader().getExtension(ExtensionPassiveScan.class).getScanStatus()
+						.setScanCount(getRecordsToScan());
 			}
 		}
 		
@@ -195,6 +236,9 @@ public class PassiveScanThread extends Thread implements ProxyListener, SessionC
 	}
 	
 	protected int getRecordsToScan() {
+		if (historyTable == null) {
+			return 0;
+		}
 		return this.getLastHistoryId() - getLastScannedId();
 	}
 
@@ -204,7 +248,7 @@ public class PassiveScanThread extends Thread implements ProxyListener, SessionC
 		}
 		return currentId;
 	}
-
+	
 	public void raiseAlert(int id, Alert alert) {
 		if (shutDown) {
 			return;
@@ -217,7 +261,24 @@ public class PassiveScanThread extends Thread implements ProxyListener, SessionC
 		alert.setSource(Alert.Source.PASSIVE);
 	    // Raise the alert
 		extAlert.alertFound(alert, href);
-
+		
+		if (this.pscanOptions.getMaxAlertsPerRule() > 0) {
+			// Theres a limit on how many each rule can raise
+			Integer count = alertCounts.get(alert.getPluginId());
+			if (count == null) {
+				count = Integer.valueOf(0);
+			}
+			alertCounts.put(alert.getPluginId(), count+1);
+			if (count > this.pscanOptions.getMaxAlertsPerRule()) {
+				// Disable the plugin
+				PassiveScanner scanner = this.scannerList.getScanner(alert.getPluginId());
+				if (scanner != null) {
+					logger.info("Disabling passive scanner " + scanner.getName() + " as it has raised more than "
+							+ this.pscanOptions.getMaxAlertsPerRule() + " alerts.");
+					scanner.setEnabled(false);
+				}
+			}
+		}
 	}
 
 	public void addTag(int id, String tag) {
@@ -278,4 +339,75 @@ public class PassiveScanThread extends Thread implements ProxyListener, SessionC
 	public void sessionModeChanged(Mode mode) {
 		// Ignore
 	}
+	
+	/**
+	 * Add the History Type ({@code int}) to the set of applicable history
+	 * types.
+	 * 
+	 * @param type
+	 *            the type to be added to the set of applicable history types
+	 * @since TODO add version
+	 */
+	public static void addApplicableHistoryType(int type) {
+		optedInHistoryTypes.add(type);
+	}
+	
+	/**
+	 * Remove the History Type ({@code int}) from the set of applicable history
+	 * types.
+	 * 
+	 * @param type
+	 *            the type to be removed from the set of applicable history
+	 *            types
+	 * @since TODO add version
+	 */
+	public static void removeApplicableHistoryType(int type) {
+		optedInHistoryTypes.remove(type);
+	}
+
+	/**
+	 * Returns the set of History Types which have "opted-in" to be applicable
+	 * for passive scanning.
+	 * 
+	 * @return a set of {@code Integer} representing all of the History Types
+	 *         which have "opted-in" for passive scanning.
+	 * @since TODO add version
+	 */
+	public static Set<Integer> getOptedInHistoryTypes() {
+		return Collections.unmodifiableSet(optedInHistoryTypes);
+	}
+	
+	/**
+	 * Returns the full set (both default and "opted-in") which are to be
+	 * applicable for passive scanning.
+	 * 
+	 * @return a set of {@code Integer} representing all of the History Types
+	 *         which are applicable for passive scanning.
+	 * @since TODO add version
+	 */
+	public static Set<Integer> getApplicableHistoryTypes() {
+		Set<Integer> allApplicableTypes = new HashSet<Integer>();
+		allApplicableTypes.addAll(PluginPassiveScanner.getDefaultHistoryTypes());
+		if (!optedInHistoryTypes.isEmpty()) {
+			allApplicableTypes.addAll(optedInHistoryTypes);
+		}
+		return allApplicableTypes;
+	}
+
+	
+	public String getCurrentRuleName() {
+		return currentRuleName;
+	}
+
+	
+	public String getCurrentUrl() {
+		return currentUrl;
+	}
+
+	
+	public long getCurrentRuleStartTime() {
+		return currentRuleStartTime;
+	}
+	
+	
 }

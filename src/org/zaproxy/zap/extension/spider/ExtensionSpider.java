@@ -23,7 +23,6 @@ package org.zaproxy.zap.extension.spider;
 
 import java.awt.Dimension;
 import java.awt.EventQueue;
-import java.awt.Toolkit;
 import java.awt.event.KeyEvent;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -35,7 +34,6 @@ import java.util.List;
 
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
-import javax.swing.KeyStroke;
 
 import org.apache.commons.httpclient.URI;
 import org.apache.commons.lang.StringUtils;
@@ -86,6 +84,8 @@ public class ExtensionSpider extends ExtensionAdaptor implements SessionChangedL
 	SpiderDialog spiderDialog = null;
 
 	private PopupMenuItemSpiderDialog popupMenuItemSpiderDialog;
+
+	private PopupMenuItemSpiderDialogWithContext popupMenuItemSpiderDialogWithContext;
 
 	/** The options spider panel. */
 	private OptionsSpiderPanel optionsSpiderPanel = null;
@@ -158,6 +158,7 @@ public class ExtensionSpider extends ExtensionAdaptor implements SessionChangedL
 			extensionHook.getHookView().addStatusPanel(getSpiderPanel());
 			extensionHook.getHookView().addOptionPanel(getOptionsSpiderPanel());
 			extensionHook.getHookMenu().addPopupMenuItem(getPopupMenuItemSpiderDialog());
+			extensionHook.getHookMenu().addPopupMenuItem(getPopupMenuItemSpiderDialogWithContext());
 			ExtensionHelp.enableHelpKey(getSpiderPanel(), "ui.tabs.spider");
 		}
 
@@ -175,6 +176,13 @@ public class ExtensionSpider extends ExtensionAdaptor implements SessionChangedL
 			popupMenuItemSpiderDialog = new PopupMenuItemSpiderDialog(this);
 		}
 		return popupMenuItemSpiderDialog;
+	}
+
+	private PopupMenuItemSpiderDialogWithContext getPopupMenuItemSpiderDialogWithContext() {
+		if (popupMenuItemSpiderDialogWithContext == null) {
+			popupMenuItemSpiderDialogWithContext = new PopupMenuItemSpiderDialogWithContext(this);
+		}
+		return popupMenuItemSpiderDialogWithContext;
 	}
 
 	@Override
@@ -326,6 +334,10 @@ public class ExtensionSpider extends ExtensionAdaptor implements SessionChangedL
 
 	@Override
 	public void sessionModeChanged(Mode mode) {
+		if (Mode.safe.equals(mode)) {
+			this.scanController.stopAllScans();
+		}
+
 		if (View.isInitialised()) {
 			this.getSpiderPanel().sessionModeChanged(mode);
 			getMenuItemCustomScan().setEnabled( ! Mode.safe.equals(mode));
@@ -803,22 +815,26 @@ public class ExtensionSpider extends ExtensionAdaptor implements SessionChangedL
     private ZapMenuItem getMenuItemCustomScan() {
         if (menuItemCustomScan  == null) {
             menuItemCustomScan = new ZapMenuItem("menu.tools.spider",
-                    KeyStroke.getKeyStroke(KeyEvent.VK_S, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask() | KeyEvent.ALT_DOWN_MASK, false));
+                    getView().getMenuShortcutKeyStroke(KeyEvent.VK_S, KeyEvent.ALT_DOWN_MASK, false));
             menuItemCustomScan.setEnabled(Control.getSingleton().getMode() != Mode.safe);
 
-            menuItemCustomScan.addActionListener(new java.awt.event.ActionListener() {
-                @Override
-                public void actionPerformed(java.awt.event.ActionEvent e) {
-                	showSpiderDialog(null);
-                }
-            });
-
+            menuItemCustomScan.addActionListener(e -> showSpiderDialog((Target) null));
         }
         
         return menuItemCustomScan;
     }
 
 	public void showSpiderDialog(SiteNode node) {
+		showSpiderDialog(node != null ? new Target(node) : null);
+	}
+
+	/**
+	 * Shows the spider dialogue with the given target, if not already visible.
+	 *
+	 * @param target the target, might be {@code null}.
+	 * @since TODO add version.
+	 */
+	public void showSpiderDialog(Target target) {
 		if (spiderDialog == null) {
 			spiderDialog = new SpiderDialog(this, View.getSingleton().getMainFrame(), new Dimension(700, 430));
 		}
@@ -827,8 +843,8 @@ public class ExtensionSpider extends ExtensionAdaptor implements SessionChangedL
 			spiderDialog.toFront();
 			return;
 		}
-		if (node != null) {
-			spiderDialog.init(new Target(node));
+		if (target != null) {
+			spiderDialog.init(target);
 		} else {
 			// Keep the previous target
 			spiderDialog.init(null);

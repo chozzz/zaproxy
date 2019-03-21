@@ -67,6 +67,14 @@
 // ZAP: 2017/06/19 Allow to send a request with custom socket timeout.
 // ZAP: 2017/11/20 Add initiator constant for Token Generator requests.
 // ZAP: 2017/11/27 Use custom CookieSpec (ZapCookieSpec).
+// ZAP: 2017/12/20 Apply socket connect timeout (Issue 4171).
+// ZAP: 2018/02/06 Make the lower case changes locale independent (Issue 4327).
+// ZAP: 2018/02/19 Added WEB_SOCKET_INITIATOR.
+// ZAP: 2018/02/23 Issue 1161: Allow to override the global session tracking setting
+//                 Fix Session Tracking button sync
+// ZAP: 2018/08/03 Added AUTHENTICATION_HELPER_INITIATOR.
+// ZAP: 2018/09/17 Set the user to messages created for redirections (Issue 2531).
+// ZAP: 2018/10/12 Deprecate getClient(), it exposes implementation details.
 
 package org.parosproxy.paros.network;
 
@@ -75,6 +83,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.httpclient.DefaultHttpMethodRetryHandler;
 import org.apache.commons.httpclient.Header;
@@ -123,6 +133,8 @@ public class HttpSender {
 	public static final int AJAX_SPIDER_INITIATOR = 10;
 	public static final int FORCED_BROWSE_INITIATOR = 11;
 	public static final int TOKEN_GENERATOR_INITIATOR = 12;
+	public static final int WEB_SOCKET_INITIATOR = 13;
+	public static final int AUTHENTICATION_HELPER_INITIATOR = 14;
 
 	private static Logger log = Logger.getLogger(HttpSender.class);
 
@@ -207,11 +219,8 @@ public class HttpSender {
 		client.getParams().setParameter(HttpMethodDirector.PARAM_DEFAULT_USER_AGENT_CONNECT_REQUESTS, defaultUserAgent);
 		clientViaProxy.getParams().setParameter(HttpMethodDirector.PARAM_DEFAULT_USER_AGENT_CONNECT_REQUESTS, defaultUserAgent);
 
-		if (useGlobalState) {
-			checkState();
-		} else {
-			setClientsCookiePolicy(CookiePolicy.BROWSER_COMPATIBILITY);
-		}
+		setUseGlobalState(useGlobalState);
+
 	}
 
 	private void setClientsCookiePolicy(String policy) {
@@ -230,6 +239,24 @@ public class HttpSender {
 			setClientsCookiePolicy(CookiePolicy.BROWSER_COMPATIBILITY);
 		} else {
 			setClientsCookiePolicy(CookiePolicy.IGNORE_COOKIES);
+		}
+	}
+
+	/**
+	 * Sets whether or not the global state should be used.
+	 * <p>
+	 * Refer to {@link #HttpSender(ConnectionParam, boolean, int)} for details on how the global state is used.
+	 *
+	 * @param enableGlobalState {@code true} if the global state should be used, {@code false} otherwise.
+	 * @since TODO add version
+	 */
+	public void setUseGlobalState(boolean enableGlobalState) {
+		if (enableGlobalState) {
+			checkState();
+		} else {
+			client.setState(new HttpState());
+			clientViaProxy.setState(new HttpState());
+			setClientsCookiePolicy(CookiePolicy.BROWSER_COMPATIBILITY);
 		}
 	}
 
@@ -346,7 +373,7 @@ public class HttpSender {
 		if (connectionHeader == null) {
 			return false;
 		}
-		return connectionHeader.getValue().toLowerCase().contains("upgrade");
+		return connectionHeader.getValue().toLowerCase(Locale.ROOT).contains("upgrade");
 	}
 
 	public void shutdown() {
@@ -410,6 +437,7 @@ public class HttpSender {
 			sendAuthenticated(msg, false);
 
 			HttpMessage temp = msg.cloneAll();
+			temp.setRequestingUser(getUser(msg));
 			// POST/PUT method cannot be redirected by library. Need to follow by code
 
 			// loop 1 time only because httpclient can handle redirect itself after first GET.
@@ -552,7 +580,7 @@ public class HttpSender {
 		// no more retry
 		modifyUserAgent(msg);
 		method = helper.createRequestMethod(msg.getRequestHeader(), msg.getRequestBody(), params);
-		if (!(method instanceof EntityEnclosingMethod)) {
+		if (!(method instanceof EntityEnclosingMethod) || method instanceof ZapGetMethod) {
 			// cant do this for EntityEnclosingMethod methods - it will fail
 			method.setFollowRedirects(isFollowRedirect);
 		}
@@ -618,8 +646,9 @@ public class HttpSender {
 	}
 
 	private void setCommonManagerParams(MultiThreadedHttpConnectionManager mgr) {
-		// ZAP: set timeout
-		mgr.getParams().setSoTimeout(this.param.getTimeoutInSecs() * 1000);
+		int timeout = (int) TimeUnit.SECONDS.toMillis(this.param.getTimeoutInSecs());
+		mgr.getParams().setSoTimeout(timeout);
+		mgr.getParams().setConnectionTimeout(timeout);
 		mgr.getParams().setStaleCheckingEnabled(true);
 
 		// Set to arbitrary large values to prevent locking
@@ -706,7 +735,7 @@ public class HttpSender {
 	 * replaceAll("Transfer-Encoding: chunked\r\n", ""); msg.setResponseHeader(resHeader);
 	 * msg.getResponseBody().setCharset(resHeader.getCharset()); msg.getResponseBody().setLength(0);
 	 * 
-	 * // process response for each listner
+	 * // process response for each listener
 	 * 
 	 * pipe.write(msg.getResponseHeader()); pipe.flush();
 	 * 
@@ -771,7 +800,12 @@ public class HttpSender {
 		this.user = user;
 	}
 	
-	// ZAP: Added a getter for the client.
+	/**
+	 * @return the HTTP client implementation.
+	 * @deprecated (TODO add version) Do not use, this exposes implementation details which might change without warning. It
+	 *             will be removed in a following version.
+	 */
+	@Deprecated
 	public HttpClient getClient() {
 		return this.client;
 	}
@@ -916,7 +950,7 @@ public class HttpSender {
     }
 
     /**
-     * Follows redirections using the response of the given {@code message}. The {@code validator} in the give request
+     * Follows redirections using the response of the given {@code message}. The {@code validator} in the given request
      * configuration will be called for each redirection received. After the call to this method the given {@code message} will
      * have the contents of the last response received (possibly the response of a redirection).
      * <p>
@@ -932,6 +966,7 @@ public class HttpSender {
         HttpRedirectionValidator validator = requestConfig.getRedirectionValidator();
         validator.notifyMessageReceived(message);
 
+        User requestingUser = getUser(message);
         HttpMessage redirectMessage = message;
         int maxRedirections = client.getParams().getIntParameter(HttpClientParams.MAX_REDIRECTS, 100);
         for (int i = 0; i < maxRedirections && isRedirectionNeeded(redirectMessage.getResponseHeader().getStatusCode()); i++) {
@@ -941,9 +976,10 @@ public class HttpSender {
             }
 
             redirectMessage = redirectMessage.cloneAll();
+            redirectMessage.setRequestingUser(requestingUser);
             redirectMessage.getRequestHeader().setURI(newLocation);
 
-            if (isRequestRewriteNeeded(redirectMessage.getResponseHeader().getStatusCode())) {
+            if (isRequestRewriteNeeded(redirectMessage)) {
                 redirectMessage.getRequestHeader().setMethod(HttpRequestHeader.GET);
                 redirectMessage.getRequestHeader().setHeader(HttpHeader.CONTENT_TYPE, null);
                 redirectMessage.getRequestHeader().setHeader(HttpHeader.CONTENT_LENGTH, null);
@@ -966,7 +1002,7 @@ public class HttpSender {
      *
      * @param statusCode the status code that will be checked
      * @return {@code true} if a redirection is needed, {@code false} otherwise
-     * @see #isRequestRewriteNeeded(int)
+     * @see #isRequestRewriteNeeded(HttpMessage)
      */
     private static boolean isRedirectionNeeded(int statusCode) {
         switch (statusCode) {
@@ -982,18 +1018,24 @@ public class HttpSender {
     }
 
     /**
-     * Tells whether or not the (original) request of the redirection with the given status code, should be rewritten.
+     * Tells whether or not the (original) request of the redirection, should be rewritten.
      * <p>
-     * For status codes 301, 302 and 303 the request should be changed from POST to GET when following redirections (mimicking
-     * the behaviour of browsers, which per <a href="https://tools.ietf.org/html/rfc7231#section-6.4">RFC 7231, Section 6.4</a>
-     * is now OK).
+     * For status codes 301 and 302 the request should be changed from POST to GET when following redirections, for status code
+     * 303 it should be changed to GET for all methods except GET/HEAD (mimicking the behaviour of browsers, which per
+     * <a href="https://tools.ietf.org/html/rfc7231#section-6.4">RFC 7231, Section 6.4</a> is now OK).
      *
-     * @param statusCode the status code that will be checked
+     * @param message the message with the redirection.
      * @return {@code true} if the request should be rewritten, {@code false} otherwise
      * @see #isRedirectionNeeded(int)
      */
-    private static boolean isRequestRewriteNeeded(int statusCode) {
-        return statusCode == 301 || statusCode == 302 || statusCode == 303;
+    private static boolean isRequestRewriteNeeded(HttpMessage message) {
+        int statusCode = message.getResponseHeader().getStatusCode();
+        String method = message.getRequestHeader().getMethod();
+        if (statusCode == 301 || statusCode == 302) {
+            return HttpRequestHeader.POST.equalsIgnoreCase(method);
+        }
+        return statusCode == 303
+                && !(HttpRequestHeader.GET.equalsIgnoreCase(method) || HttpRequestHeader.HEAD.equalsIgnoreCase(method));
     }
 
     /**

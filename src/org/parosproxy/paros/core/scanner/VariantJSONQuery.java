@@ -41,6 +41,10 @@ public class VariantJSONQuery extends VariantAbstractRPCQuery {
 
     private SimpleStringReader sr;
 
+    public VariantJSONQuery () {
+    	super(NameValuePair.TYPE_JSON);
+    }
+    
     /**
      * 
      * @param contentType
@@ -179,7 +183,7 @@ public class VariantJSONQuery extends VariantAbstractRPCQuery {
 
     /**
      * 
-     * @param sr 
+     * @param fieldName
      */
     private void parseValue(String fieldName) {
         int chr = sr.read();

@@ -35,6 +35,10 @@ import java.util.List;
  */
 public class AddOnClassLoader extends URLClassLoader {
 
+    static {
+        ClassLoader.registerAsParallelCapable();
+    }
+
     private final ParentClassLoader parent;
     private final List<AddOnClassLoader> childClassLoaders;
     private List<AddOnClassLoader> dependencies;
@@ -210,6 +214,15 @@ public class AddOnClassLoader extends URLClassLoader {
      */
     public void removeChildClassLoader(AddOnClassLoader child) {
         childClassLoaders.remove(child);
+    }
+
+    /**
+     * Gets the child class loaders.
+     *
+     * @return an unmodifiable list with the child class loaders.
+     */
+    List<AddOnClassLoader> getChildClassLoaders() {
+        return Collections.unmodifiableList(childClassLoaders);
     }
 
     @Override
